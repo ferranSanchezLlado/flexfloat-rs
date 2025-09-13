@@ -2,6 +2,7 @@ use std::ops::{Index, IndexMut, Range};
 
 use crate::bitarray::BitArray;
 
+#[derive(Debug, Clone)]
 pub struct BoolBitArray {
     bits: Vec<bool>,
 }
@@ -74,6 +75,10 @@ impl BitArray for BoolBitArray {
         byte_vec
     }
 
+    fn iter_bits(&self) -> impl Iterator<Item = &bool> {
+        self.bits.iter()
+    }
+
     fn len(&self) -> usize {
         self.bits.len()
     }
@@ -84,6 +89,16 @@ impl BitArray for BoolBitArray {
 
     fn get_mut(&mut self, index: usize) -> Option<&mut bool> {
         self.bits.get_mut(index)
+    }
+
+    fn get_range(&self, range: Range<usize>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        if range.end > self.len() || range.start > range.end {
+            return None;
+        }
+        return Some(Self::from_bits(&self.bits[range]));
     }
 }
 
@@ -107,6 +122,7 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
+    use crate::tests::*;
 
     fn test_from_bits(mut rng: impl Rng, n_experiments: usize) {
         let bits = vec![true, false, true, true, false];
@@ -183,13 +199,13 @@ mod tests {
 
     fn test_from_float(mut rng: impl Rng, n_experiments: usize) {
         let float = 3.141592653589793;
-        let bit_array = BoolBitArray::from_float(float);
+        let bit_array = BoolBitArray::from_f64(float);
         assert_eq!(bit_array.bits.len(), 64);
         assert_eq!(f64_to_bits(float), bit_array.bits);
 
         for _ in 0..n_experiments {
             let float: f64 = rng.random();
-            let bit_array = BoolBitArray::from_float(float);
+            let bit_array = BoolBitArray::from_f64(float);
             assert_eq!(bit_array.bits.len(), 64);
             assert_eq!(f64_to_bits(float), bit_array.bits);
         }
@@ -197,7 +213,7 @@ mod tests {
 
     fn test_to_float(mut rng: impl Rng, n_experiments: usize) {
         let float = 3.141592653589793;
-        let bit_array = BoolBitArray::from_float(float);
+        let bit_array = BoolBitArray::from_f64(float);
         assert_eq!(bit_array.to_float().unwrap(), float);
 
         let bit_array = BoolBitArray::zeros(65);
@@ -208,7 +224,7 @@ mod tests {
 
         for _ in 0..n_experiments {
             let float: f64 = rng.random();
-            let bit_array = BoolBitArray::from_float(float);
+            let bit_array = BoolBitArray::from_f64(float);
             assert_eq!(bit_array.to_float().unwrap(), float);
         }
     }

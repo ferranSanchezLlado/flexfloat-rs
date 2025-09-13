@@ -1,4 +1,5 @@
 pub mod bitarray;
+pub mod flexfloat;
 
 #[cfg(test)]
 mod tests {

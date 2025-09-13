@@ -3,7 +3,11 @@ name = "flexfloat"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+bigint = ["dep:num-bigint"]
+
 [dependencies]
+num-bigint = { version = "0.4.3", optional = true }
 
 [dev-dependencies]
 rand = "0.9.2"
