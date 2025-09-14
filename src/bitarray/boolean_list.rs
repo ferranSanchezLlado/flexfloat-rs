@@ -61,22 +61,22 @@ impl BitArray for BoolBitArray {
 
     fn to_bytes(&self) -> Vec<u8> {
         let n_bits = self.bits.len();
-        let bytes = (n_bits + 7) / 8;
-        let mut byte_vec = vec![0u8; bytes];
+        let n_bytes = (n_bits + 7) / 8;
+        let mut bytes = vec![0u8; n_bytes];
 
         for (i, &bit) in self.bits.iter().enumerate() {
             if bit {
                 let byte_index = i / 8;
                 let bit_index = i % 8;
-                byte_vec[byte_index] |= 1 << bit_index;
+                bytes[byte_index] |= 1 << bit_index;
             }
         }
 
-        byte_vec
+        bytes
     }
 
-    fn iter_bits(&self) -> impl Iterator<Item = &bool> {
-        self.bits.iter()
+    fn iter_bits(&self) -> impl Iterator<Item = bool> {
+        self.bits.iter().copied()
     }
 
     fn len(&self) -> usize {

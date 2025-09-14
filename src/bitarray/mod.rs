@@ -18,18 +18,18 @@ pub trait BitArray {
         Self: Sized,
     {
         let n_bits = bits.len();
-        let bytes = (n_bits + 7) / 8;
-        let mut byte_vec = vec![0u8; bytes];
+        let n_bytes = (n_bits + 7) / 8;
+        let mut bytes = vec![0u8; n_bytes];
 
         for (i, &bit) in bits.iter().enumerate() {
             if bit {
                 let byte_index = i / 8;
                 let bit_index = i % 8;
-                byte_vec[byte_index] |= 1 << bit_index;
+                bytes[byte_index] |= 1 << bit_index;
             }
         }
 
-        Self::from_bytes(&byte_vec, n_bits)
+        Self::from_bytes(&bytes, n_bits)
     }
     fn from_f64(value: f64) -> Self
     where
@@ -69,38 +69,29 @@ pub trait BitArray {
     where
         Self: Sized,
     {
-        let bytes = (n_bits + 7) / 8;
-        let bits = vec![0u8; bytes];
+        let n_bytes = (n_bits + 7) / 8;
+        let bytes = vec![0u8; n_bytes];
 
-        Self::from_bytes(&bits, n_bits)
+        Self::from_bytes(&bytes, n_bits)
     }
     fn ones(n_bits: usize) -> Self
     where
         Self: Sized,
     {
-        let bytes = (n_bits + 7) / 8;
-        let mut bits = vec![0xffu8; bytes];
+        let n_bytes = (n_bits + 7) / 8;
+        let mut bytes = vec![0xffu8; n_bytes];
 
         let last_num_bits = n_bits % 8;
         if last_num_bits > 0 {
-            bits[bytes - 1] = (1 << last_num_bits) - 1;
+            bytes[n_bytes - 1] = (1 << last_num_bits) - 1;
         }
 
-        Self::from_bytes(&bits, n_bits)
+        Self::from_bytes(&bytes, n_bits)
     }
 
     fn to_bytes(&self) -> Vec<u8>;
     fn to_bits(&self) -> Vec<bool> {
-        let n_bits = self.len();
-        let mut bool_vec = Vec::with_capacity(n_bits);
-
-        for i in 0..n_bits {
-            if let Some(bit) = self.get(i) {
-                bool_vec.push(*bit);
-            }
-        }
-
-        bool_vec
+        self.iter_bits().collect()
     }
     fn to_float(&self) -> Option<f64> {
         if self.len() != 64 {
@@ -110,9 +101,8 @@ pub trait BitArray {
         Some(f64::from_bits(u64::from_le_bytes(bytes)))
     }
     fn to_bits_string(&self) -> String {
-        self.to_bits()
-            .iter()
-            .map(|&b| if b { '1' } else { '0' })
+        self.iter_bits()
+            .map(|b| if b { '1' } else { '0' })
             .collect()
     }
     #[cfg(feature = "bigint")]
@@ -127,7 +117,7 @@ pub trait BitArray {
         unsigned - half
     }
 
-    fn iter_bits(&self) -> impl Iterator<Item = &bool>;
+    fn iter_bits(&self) -> impl Iterator<Item = bool>;
 
     fn len(&self) -> usize;
     // TODO: https://doc.rust-lang.org/std/slice/trait.SliceIndex.html

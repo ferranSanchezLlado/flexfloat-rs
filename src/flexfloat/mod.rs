@@ -50,20 +50,20 @@ impl<B: BitArray> FlexFloat<B> {
     }
 
     fn is_special_exponent(&self) -> bool {
-        self.exponent.iter_bits().all(|&b| b)
+        self.exponent.iter_bits().all(|b| b)
     }
 
     pub fn is_nan(&self) -> bool {
-        self.is_special_exponent() && self.fraction.iter_bits().any(|&b| b)
+        self.is_special_exponent() && self.fraction.iter_bits().any(|b| b)
     }
 
     pub fn is_infinity(&self) -> bool {
-        self.is_special_exponent() && self.fraction.iter_bits().all(|&b| b == false)
+        self.is_special_exponent() && self.fraction.iter_bits().all(|b| b == false)
     }
 
     pub fn is_zero(&self) -> bool {
-        self.exponent.iter_bits().all(|&b| b == false)
-            && self.fraction.iter_bits().all(|&b| b == false)
+        self.exponent.iter_bits().all(|b| b == false)
+            && self.fraction.iter_bits().all(|b| b == false)
     }
 
     pub fn sign(&self) -> bool {
