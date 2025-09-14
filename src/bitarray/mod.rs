@@ -18,7 +18,7 @@ pub trait BitArray {
         Self: Sized,
     {
         let n_bits = bits.len();
-        let n_bytes = (n_bits + 7) / 8;
+        let n_bytes = n_bits.div_ceil(8);
         let mut bytes = vec![0u8; n_bytes];
 
         for (i, &bit) in bits.iter().enumerate() {
@@ -69,7 +69,7 @@ pub trait BitArray {
     where
         Self: Sized,
     {
-        let n_bytes = (n_bits + 7) / 8;
+        let n_bytes = n_bits.div_ceil(8);
         let bytes = vec![0u8; n_bytes];
 
         Self::from_bytes(&bytes, n_bits)
@@ -78,7 +78,7 @@ pub trait BitArray {
     where
         Self: Sized,
     {
-        let n_bytes = (n_bits + 7) / 8;
+        let n_bytes = n_bits.div_ceil(8);
         let mut bytes = vec![0xffu8; n_bytes];
 
         let last_num_bits = n_bits % 8;
@@ -163,6 +163,7 @@ impl_index!(BoolBitArray);
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "bigint")]
     use num_bigint::{BigInt, BigUint};
     pub use rand::Rng;
 
@@ -180,8 +181,9 @@ mod tests {
             .collect()
     }
 
+    #[cfg(feature = "bigint")]
     pub fn random_biguint(rng: &mut impl Rng, n_bits: usize) -> BigUint {
-        let n_bytes = (n_bits + 7) / 8;
+        let n_bytes = n_bits.div_ceil(8);
         let mut bytes = vec![0u8; n_bytes];
         rng.fill(&mut bytes[..]);
         let last_num_bits = n_bits % 8;
@@ -191,6 +193,7 @@ mod tests {
         BigUint::from_bytes_le(&bytes)
     }
 
+    #[cfg(feature = "bigint")]
     pub fn random_bigint(rng: &mut impl Rng, n_bits: usize) -> BigInt {
         let uint = random_biguint(rng, n_bits - 1);
         if rng.random_bool(0.5) {

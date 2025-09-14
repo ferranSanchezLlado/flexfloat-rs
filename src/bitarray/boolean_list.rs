@@ -66,7 +66,7 @@ impl BitArray for BoolBitArray {
 
     fn to_bytes(&self) -> Vec<u8> {
         let n_bits = self.bits.len();
-        let n_bytes = (n_bits + 7) / 8;
+        let n_bytes = n_bits.div_ceil(8);
         let mut bytes = vec![0u8; n_bytes];
 
         for (i, &bit) in self.bits.iter().enumerate() {
@@ -125,6 +125,7 @@ impl IndexMut<Range<usize>> for BoolBitArray {
 mod tests {
     use core::f64;
 
+    #[cfg(feature = "bigint")]
     use num_bigint::{BigInt, BigUint};
     use rstest::rstest;
 
@@ -336,6 +337,7 @@ mod tests {
         test_to_float(&mut rng, n_experiments);
     }
 
+    #[cfg(feature = "bigint")]
     fn test_from_biguint(mut rng: impl Rng, n_experiments: usize) {
         // Test with a known value
         let biguint = BigUint::from(0b11110000u8);
@@ -372,6 +374,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "bigint")]
     fn test_to_biguint(mut rng: impl Rng, n_experiments: usize) {
         let big_uint = BigUint::from(0b11110000u8);
         let bit_array = BoolBitArray::from_biguint(&big_uint);
@@ -394,6 +397,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "bigint")]
     fn test_from_bigint(mut rng: impl Rng, n_experiments: usize) {
         // Test with positive value
         let bigint = BigInt::from(7i8);
@@ -463,6 +467,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "bigint")]
     fn test_to_bigint(mut rng: impl Rng, n_experiments: usize) {
         let bigint = BigInt::from(7i8);
         let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
@@ -484,12 +489,14 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "bigint")]
     #[rstest]
     fn test_bitarray_biguint(mut rng: impl Rng, n_experiments: usize) {
         test_from_biguint(&mut rng, n_experiments);
         test_to_biguint(&mut rng, n_experiments);
     }
 
+    #[cfg(feature = "bigint")]
     #[rstest]
     fn test_bitarray_bigint(mut rng: impl Rng, n_experiments: usize) {
         test_from_bigint(&mut rng, n_experiments);
