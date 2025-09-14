@@ -134,6 +134,10 @@ pub trait BitArray {
         let bits: Vec<bool> = range.map(|i| *self.get(i).unwrap()).collect();
         Some(Self::from_bits(&bits))
     }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 macro_rules! impl_index {

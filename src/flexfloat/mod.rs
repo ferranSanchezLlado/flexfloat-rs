@@ -23,7 +23,7 @@ impl<B: BitArray> FlexFloat<B> {
 
     pub fn zero_with_sign(sign: bool) -> Self {
         Self {
-            sign: sign,
+            sign,
             exponent: B::zeros(11),
             fraction: B::zeros(52),
         }
@@ -58,12 +58,11 @@ impl<B: BitArray> FlexFloat<B> {
     }
 
     pub fn is_infinity(&self) -> bool {
-        self.is_special_exponent() && self.fraction.iter_bits().all(|b| b == false)
+        self.is_special_exponent() && self.fraction.iter_bits().all(|b| !b)
     }
 
     pub fn is_zero(&self) -> bool {
-        self.exponent.iter_bits().all(|b| b == false)
-            && self.fraction.iter_bits().all(|b| b == false)
+        self.exponent.iter_bits().all(|b| !b) && self.fraction.iter_bits().all(|b| !b)
     }
 
     pub fn sign(&self) -> bool {

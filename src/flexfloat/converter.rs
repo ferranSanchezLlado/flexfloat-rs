@@ -104,7 +104,7 @@ mod tests {
         let ff = FlexFloat {
             sign: false,
             exponent: DefaultBitArray::ones(11),
-            fraction: DefaultBitArray::from_bits(&vec![true; 52]),
+            fraction: DefaultBitArray::from_bits(&[true; 52]),
         };
         let converted_value: f64 = ff.into();
         assert!(converted_value.is_nan());

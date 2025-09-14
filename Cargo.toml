@@ -1,6 +1,14 @@
 [package]
 name = "flexfloat"
 version = "0.1.0"
+authors = ["Ferran Sanchez Llado"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ferranSanchezLlado/flexfloat-rs"
+homepage = "https://github.com/ferranSanchezLlado/flexfloat-rs"
+description = "A Rust library for arbitrary floating-point types with infinite exponent."
+keywords = ["float", "bigfloat", "arbitrary precision", "flexible", "custom"]
+categories = ["data-structures", "mathematics", "science", "finance", "rust-patterns"]
 edition = "2024"
 
 [features]

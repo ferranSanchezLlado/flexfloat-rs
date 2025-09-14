@@ -22,7 +22,7 @@ impl BitArray for BoolBitArray {
     where
         Self: Sized,
     {
-        let mut bits = vec![false; n_bits];
+        let mut bits = Vec::with_capacity(n_bits);
 
         for i in 0..n_bits {
             let byte_index = i / 8;
@@ -32,7 +32,12 @@ impl BitArray for BoolBitArray {
             } else {
                 0
             };
-            bits[i] = bit == 1;
+            bits.push(bit == 1);
+        }
+
+        // Fill with zeros if n_bits is more than available bits in bytes
+        while bits.len() < n_bits {
+            bits.push(false);
         }
         Self { bits }
     }
@@ -98,7 +103,7 @@ impl BitArray for BoolBitArray {
         if range.end > self.len() || range.start > range.end {
             return None;
         }
-        return Some(Self::from_bits(&self.bits[range]));
+        Some(Self::from_bits(&self.bits[range]))
     }
 }
 
@@ -118,6 +123,8 @@ impl IndexMut<Range<usize>> for BoolBitArray {
 
 #[cfg(test)]
 mod tests {
+    use core::f64;
+
     use num_bigint::{BigInt, BigUint};
     use rstest::rstest;
 
@@ -171,7 +178,7 @@ mod tests {
         for _ in 0..n_experiments {
             let len = rng.random_range(1..100_000);
             let bit_array = BoolBitArray::zeros(len);
-            assert!(bit_array.bits.into_iter().all(|b| b == false));
+            assert!(bit_array.bits.into_iter().all(|b| !b));
         }
     }
 
@@ -199,7 +206,7 @@ mod tests {
     }
 
     fn test_from_float(mut rng: impl Rng, n_experiments: usize) {
-        let float = 3.141592653589793;
+        let float = f64::consts::PI;
         let bit_array = BoolBitArray::from_f64(float);
         assert_eq!(bit_array.bits.len(), 64);
         assert_eq!(f64_to_bits(float), bit_array.bits);
@@ -213,7 +220,7 @@ mod tests {
     }
 
     fn test_to_float(mut rng: impl Rng, n_experiments: usize) {
-        let float = 3.141592653589793;
+        let float = f64::consts::E;
         let bit_array = BoolBitArray::from_f64(float);
         assert_eq!(bit_array.to_float().unwrap(), float);
 
@@ -438,7 +445,7 @@ mod tests {
                 .expect("Should fit in the given bit width");
 
             // Check sign
-            let sign_bit = bit_array.bits[n_bits - 1] == false;
+            let sign_bit = !bit_array.bits[n_bits - 1];
             let expected_sign = bigint.sign() == num_bigint::Sign::Minus;
             assert_eq!(sign_bit, expected_sign);
 
