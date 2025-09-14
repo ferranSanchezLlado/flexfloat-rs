@@ -118,6 +118,7 @@ impl IndexMut<Range<usize>> for BoolBitArray {
 
 #[cfg(test)]
 mod tests {
+    use num_bigint::{BigInt, BigUint};
     use rstest::rstest;
 
     use super::super::tests::*;
@@ -326,5 +327,165 @@ mod tests {
     fn test_bitarray_float(mut rng: impl Rng, n_experiments: usize) {
         test_from_float(&mut rng, n_experiments);
         test_to_float(&mut rng, n_experiments);
+    }
+
+    fn test_from_biguint(mut rng: impl Rng, n_experiments: usize) {
+        // Test with a known value
+        let biguint = BigUint::from(0b11110000u8);
+        let bit_array = BoolBitArray::from_biguint(&biguint);
+        let expected_bits = vec![false, false, false, false, true, true, true, true];
+        assert_eq!(bit_array.bits, expected_bits);
+
+        // Test with zero
+        let biguint = BigUint::from(0u8);
+        let bit_array = BoolBitArray::from_biguint(&biguint);
+        assert_eq!(bit_array.bits, vec![false; 8]);
+
+        // Test with larger known values
+        let biguint = BigUint::from(0x1234u16);
+        let bit_array = BoolBitArray::from_biguint(&biguint);
+        // 0x1234 = 0001001000110100 in binary (MSB first)
+        // But stored as LSB first: [0,0,1,0,1,1,0,0,0,1,0,0,1,0,0,0]
+        let expected_bits = vec![
+            false, false, true, false, true, true, false, false, // 0x34 = 52
+            false, true, false, false, true, false, false, false, // 0x12 = 18
+        ];
+        assert_eq!(bit_array.bits, expected_bits);
+
+        for _ in 0..n_experiments {
+            let n_bits = rng.random_range(1..100);
+            let biguint = random_biguint(&mut rng, n_bits);
+            let bit_array = BoolBitArray::from_biguint(&biguint);
+
+            // Verify by checking the bytes directly
+            let expected_bytes = biguint.to_bytes_le();
+            let actual_bytes = bit_array.to_bytes();
+
+            assert_eq!(actual_bytes, expected_bytes);
+        }
+    }
+
+    fn test_to_biguint(mut rng: impl Rng, n_experiments: usize) {
+        let big_uint = BigUint::from(0b11110000u8);
+        let bit_array = BoolBitArray::from_biguint(&big_uint);
+        assert_eq!(bit_array.to_biguint(), big_uint);
+
+        let big_uint = BigUint::from(0u8);
+        let bit_array = BoolBitArray::from_biguint(&big_uint);
+        assert_eq!(bit_array.to_biguint(), big_uint);
+
+        let big_uint = BigUint::from(0x1234u16);
+        let bit_array = BoolBitArray::from_biguint(&big_uint);
+        assert_eq!(bit_array.to_biguint(), big_uint);
+
+        for _ in 0..n_experiments {
+            let len = rng.random_range(1..100);
+            let bytes = random_bytes(&mut rng, len);
+            let big_uint = BigUint::from_bytes_le(&bytes);
+            let bit_array = BoolBitArray::from_biguint(&big_uint);
+            assert_eq!(bit_array.to_biguint(), big_uint);
+        }
+    }
+
+    fn test_from_bigint(mut rng: impl Rng, n_experiments: usize) {
+        // Test with positive value
+        let bigint = BigInt::from(7i8);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        // 7 + 8 = 15 = 0b1111
+        let expected_bits = vec![true, true, true, true]; // LSB first
+        assert_eq!(bit_array.bits, expected_bits);
+
+        // Test with negative value
+        let bigint = BigInt::from(-1i8);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        // -1 + 8 = 7 = 0b0111
+        let expected_bits = vec![true, true, true, false];
+        assert_eq!(bit_array.bits, expected_bits);
+
+        // Test with zero
+        let bigint = BigInt::from(0i8);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        // 0 + 8 = 8 = 0b1000
+        let expected_bits = vec![false, false, false, true];
+        assert_eq!(bit_array.bits, expected_bits);
+
+        // Test with minimum value
+        let bigint = BigInt::from(-8i8); // Minimum for 4-bit signed
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        // -8 + 8 = 0 = 0b0000
+        let expected_bits = vec![false, false, false, false];
+        assert_eq!(bit_array.bits, expected_bits);
+
+        // Test overflow cases
+        let bigint = BigInt::from(8i8); // Too large for 4 bits (max is 7)
+        assert!(BoolBitArray::from_bigint(&bigint, 4).is_none());
+
+        let bigint = BigInt::from(-9i8); // Too small for 4 bits (min is -8)
+        assert!(BoolBitArray::from_bigint(&bigint, 4).is_none());
+
+        // Test with larger bit widths
+        let bigint = BigInt::from(100i16);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 8).unwrap();
+        // 100 + 128 = 228 = 0b11100100
+        let expected_bits = vec![false, false, true, false, false, true, true, true];
+        assert_eq!(bit_array.bits, expected_bits);
+
+        for _ in 0..n_experiments {
+            let n_bits = rng.random_range(2..32); // At least 2 bits for sign
+            let bigint = random_bigint(&mut rng, n_bits);
+
+            let bit_array = BoolBitArray::from_bigint(&bigint, n_bits)
+                .expect("Should fit in the given bit width");
+
+            // Check sign
+            let sign_bit = bit_array.bits[n_bits - 1] == false;
+            let expected_sign = bigint.sign() == num_bigint::Sign::Minus;
+            assert_eq!(sign_bit, expected_sign);
+
+            let biguint = (bigint.clone() + (BigInt::from(1u8) << (n_bits - 1)))
+                .to_biguint()
+                .unwrap();
+            let mut expected_bytes = biguint.to_bytes_le();
+            let actual_bytes = bit_array.to_bytes();
+
+            // Biguint could miss leading zeros, specified on the n_bits
+            if expected_bytes.len() != actual_bytes.len() {
+                expected_bytes.resize(actual_bytes.len(), 0);
+            }
+            assert_eq!(actual_bytes, expected_bytes);
+        }
+    }
+
+    fn test_to_bigint(mut rng: impl Rng, n_experiments: usize) {
+        let bigint = BigInt::from(7i8);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        assert_eq!(bit_array.to_bigint(), bigint);
+
+        let bigint = BigInt::from(-1i8);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        assert_eq!(bit_array.to_bigint(), bigint);
+
+        let bigint = BigInt::from(0i8);
+        let bit_array = BoolBitArray::from_bigint(&bigint, 4).unwrap();
+        assert_eq!(bit_array.to_bigint(), bigint);
+
+        for _ in 0..n_experiments {
+            let n_bits = rng.random_range(2..100); // At least 2 bits for sign
+            let bigint = random_bigint(&mut rng, n_bits);
+            let bit_array = BoolBitArray::from_bigint(&bigint, n_bits).unwrap();
+            assert_eq!(bit_array.to_bigint(), bigint);
+        }
+    }
+
+    #[rstest]
+    fn test_bitarray_biguint(mut rng: impl Rng, n_experiments: usize) {
+        test_from_biguint(&mut rng, n_experiments);
+        test_to_biguint(&mut rng, n_experiments);
+    }
+
+    #[rstest]
+    fn test_bitarray_bigint(mut rng: impl Rng, n_experiments: usize) {
+        test_from_bigint(&mut rng, n_experiments);
+        test_to_bigint(&mut rng, n_experiments);
     }
 }

@@ -84,8 +84,8 @@ impl Debug for FlexFloat<DefaultBitArray> {
         #[cfg(feature = "bigint")]
         {
             f.debug_struct("FlexFloat")
-                .field("sign", &self.sign)
-                .field("exponent", &self.exponent.to_biguint())
+                .field("sign", if self.sign { &'-' } else { &'+' })
+                .field("exponent", &(self.exponent.to_bigint() + 1_u8))
                 .field("fraction", &self.fraction.to_biguint())
                 .finish()
         }

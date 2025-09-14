@@ -1,5 +1,5 @@
 #[cfg(feature = "bigint")]
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use std::ops::{Index, IndexMut, Range};
 
 pub mod boolean_list;
@@ -10,7 +10,7 @@ pub type DefaultBitArray = BoolBitArray;
 
 /// LE byte order
 pub trait BitArray {
-    fn from_bytes(bits: &[u8], n_bits: usize) -> Self
+    fn from_bytes(bytes: &[u8], n_bits: usize) -> Self
     where
         Self: Sized;
     fn from_bits(bits: &[bool]) -> Self
@@ -46,6 +46,23 @@ pub trait BitArray {
         let bytes = value.to_bytes_le();
         let n_bits = bytes.len() * 8;
         Self::from_bytes(&bytes, n_bits)
+    }
+    #[cfg(feature = "bigint")]
+    fn from_bigint(value: &BigInt, n_bits: usize) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        let half = BigInt::from(1u8) << (n_bits - 1);
+        let max_value = &half - 1u8;
+        let min_value = -&half;
+
+        if value < &min_value || value > &max_value {
+            return None;
+        }
+
+        let unsigned_value = (value + half).to_biguint()?;
+        let bytes = unsigned_value.to_bytes_le();
+        Some(Self::from_bytes(&bytes, n_bits))
     }
 
     fn zeros(n_bits: usize) -> Self
@@ -102,6 +119,13 @@ pub trait BitArray {
     fn to_biguint(&self) -> BigUint {
         BigUint::from_bytes_le(&self.to_bytes())
     }
+    #[cfg(feature = "bigint")]
+    fn to_bigint(&self) -> BigInt {
+        let n_bits = self.len();
+        let half = BigInt::from(1u8) << (n_bits - 1);
+        let unsigned = BigInt::from(self.to_biguint());
+        unsigned - half
+    }
 
     fn iter_bits(&self) -> impl Iterator<Item = &bool>;
 
@@ -145,6 +169,7 @@ impl_index!(BoolBitArray);
 
 #[cfg(test)]
 mod tests {
+    use num_bigint::{BigInt, BigUint};
     pub use rand::Rng;
 
     pub fn random_bits(rng: &mut impl Rng, len: usize) -> Vec<bool> {
@@ -159,6 +184,26 @@ mod tests {
         (0..len)
             .map(|_| if rng.random_bool(0.5) { '1' } else { '0' })
             .collect()
+    }
+
+    pub fn random_biguint(rng: &mut impl Rng, n_bits: usize) -> BigUint {
+        let n_bytes = (n_bits + 7) / 8;
+        let mut bytes = vec![0u8; n_bytes];
+        rng.fill(&mut bytes[..]);
+        let last_num_bits = n_bits % 8;
+        if last_num_bits > 0 {
+            bytes[n_bytes - 1] &= (1 << last_num_bits) - 1;
+        }
+        BigUint::from_bytes_le(&bytes)
+    }
+
+    pub fn random_bigint(rng: &mut impl Rng, n_bits: usize) -> BigInt {
+        let uint = random_biguint(rng, n_bits - 1);
+        if rng.random_bool(0.5) {
+            BigInt::from(uint)
+        } else {
+            -BigInt::from(uint)
+        }
     }
 
     pub fn string_to_bits(s: &str) -> Vec<bool> {
