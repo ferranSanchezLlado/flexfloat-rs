@@ -10,6 +10,7 @@ description = "A Rust library for arbitrary floating-point types with infinite e
 keywords = ["float", "bigfloat", "arbitrary precision", "flexible", "custom"]
 categories = ["data-structures", "mathematics", "science", "finance", "rust-patterns"]
 edition = "2024"
+exclude = [".github/*"]
 
 [features]
 default = ["bigint"]
