@@ -121,7 +121,7 @@ impl<B: BitArray> Add for FlexFloat<B> {
             let rhs_bit = *mant_rhs.get(i).unwrap() as u8;
             let sum = self_bit + rhs_bit + carry;
 
-            *mantissa_result.get_mut(i).unwrap() = (sum % 2) != 0;
+            *mantissa_result.get_mut(i).unwrap() = !sum.is_multiple_of(2);
             carry = sum / 2;
             assert!(carry <= 1);
         }
