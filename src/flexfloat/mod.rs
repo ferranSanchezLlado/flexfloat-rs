@@ -12,42 +12,40 @@ pub struct FlexFloat<B> {
     fraction: B,
 }
 
-impl FlexFloat<DefaultBitArray> {
-    pub fn zero_with_sign(sign: bool) -> Self {
-        Self {
-            sign,
-            exponent: DefaultBitArray::zeros(11),
-            fraction: DefaultBitArray::zeros(52),
-        }
-    }
-
-    pub fn zero(sign: bool) -> Self {
-        Self::zero_with_sign(sign)
-    }
-
-    pub fn nan() -> Self {
-        Self {
-            sign: false, // Sign doesn't matter for NaN
-            exponent: DefaultBitArray::ones(11),
-            fraction: DefaultBitArray::ones(52),
-        }
-    }
-
-    pub fn infinity(sign: bool) -> Self {
-        Self {
-            sign,
-            exponent: DefaultBitArray::ones(11),
-            fraction: DefaultBitArray::zeros(52),
-        }
-    }
-}
-
 impl<B: BitArray> FlexFloat<B> {
     pub fn new(sign: bool, exponent: B, fraction: B) -> Self {
         Self {
             sign,
             exponent,
             fraction,
+        }
+    }
+
+    pub fn zero_with_sign(sign: bool) -> Self {
+        Self {
+            sign,
+            exponent: B::zeros(11),
+            fraction: B::zeros(52),
+        }
+    }
+
+    pub fn zero() -> Self {
+        Self::zero_with_sign(false)
+    }
+
+    pub fn nan() -> Self {
+        Self {
+            sign: false, // Sign doesn't matter for NaN
+            exponent: B::ones(11),
+            fraction: B::ones(52),
+        }
+    }
+
+    pub fn infinity(sign: bool) -> Self {
+        Self {
+            sign,
+            exponent: B::ones(11),
+            fraction: B::zeros(52),
         }
     }
 

@@ -14,10 +14,10 @@ exclude = [".github/*"]
 
 [features]
 default = ["bigint"]
-bigint = ["dep:num-bigint"]
+bigint = []
 
 [dependencies]
-num-bigint = { version = "0.4.3", optional = true }
+num-bigint = { version = "0.4.3" }
 
 [dev-dependencies]
 rand = "0.9.2"

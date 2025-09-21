@@ -105,6 +105,14 @@ impl BitArray for BoolBitArray {
         }
         Some(Self::from_bits(&self.bits[range]))
     }
+
+    fn append_bool_in_place(mut self, value: bool) -> Self
+    where
+        Self: Sized,
+    {
+        self.bits.push(value);
+        self
+    }
 }
 
 impl Index<Range<usize>> for BoolBitArray {
@@ -124,6 +132,7 @@ impl IndexMut<Range<usize>> for BoolBitArray {
 #[cfg(test)]
 mod tests {
     use core::f64;
+    use std::cmp::Ordering;
 
     #[cfg(feature = "bigint")]
     use num_bigint::{BigInt, BigUint};
@@ -501,5 +510,99 @@ mod tests {
     fn test_bitarray_bigint(mut rng: impl Rng, n_experiments: usize) {
         test_from_bigint(&mut rng, n_experiments);
         test_to_bigint(&mut rng, n_experiments);
+    }
+
+    #[rstest]
+    fn test_append_bool(mut rng: impl Rng, n_experiments: usize) {
+        // Test appending to empty bit array
+        let empty_array = BoolBitArray::zeros(0);
+        let result_true = empty_array.clone().append_bool_in_place(true);
+        assert_eq!(result_true.len(), 1);
+        assert_eq!(result_true.to_bits(), vec![true]);
+
+        // Test multiple appends
+        let mut bit_array = BoolBitArray::from_bits(&[true, false]);
+        bit_array = bit_array.append_bool_in_place(true);
+        bit_array = bit_array.append_bool_in_place(false);
+        bit_array = bit_array.append_bool_in_place(true);
+        bit_array = bit_array.append_bool_in_place(true);
+
+        let expected = vec![true, false, true, false, true, true];
+        assert_eq!(bit_array.to_bits(), expected);
+
+        // Random tests
+        for _ in 0..n_experiments {
+            let len = rng.random_range(0..100);
+            let mut original_bits = random_bits(&mut rng, len);
+            let mut bit_array = BoolBitArray::from_bits(&original_bits);
+            let n_extra_bits = rng.random_range(1..20);
+
+            for _ in 0..n_extra_bits {
+                let append_value = rng.random_bool(0.5);
+                let mut new_bit_array = bit_array.clone().append_bool_in_place(append_value);
+                original_bits.push(append_value);
+                std::mem::swap(&mut bit_array, &mut new_bit_array);
+            }
+            assert_eq!(bit_array.to_bits(), original_bits);
+        }
+    }
+
+    #[rstest]
+    fn test_shift_with_bool(mut rng: impl Rng, n_experiments: usize) {
+        // Test shift by 0 (no change)
+        let original_bits = vec![true, false, true, true, false];
+        let bit_array = BoolBitArray::from_bits(&original_bits);
+        let result = bit_array.clone().shift(0);
+        assert_eq!(result.to_bits(), original_bits);
+
+        // Test positive shift with true fill
+        let result = bit_array.clone().shift_with_fill(2, true);
+        let expected = vec![true, true, false, true, true]; // Takes bits[2..], then adds true fill
+        assert_eq!(result.to_bits(), expected);
+
+        // Test negative shift with true fill
+        let result = bit_array.clone().shift_with_fill(-2, true);
+        let expected = vec![true, true, true, false, true]; // Adds true fill, then takes bits[..3]
+        assert_eq!(result.to_bits(), expected);
+
+        // Test with empty array
+        let empty_array = BoolBitArray::zeros(0);
+        let result = empty_array.clone().shift_with_fill(5, true);
+        assert_eq!(result.len(), 0);
+        let result = empty_array.shift_with_fill(-5, false);
+        assert_eq!(result.len(), 0);
+
+        // Random tests with boolean fill values
+        for _ in 0..n_experiments {
+            let len = rng.random_range(1..20);
+            let original_bits = random_bits(&mut rng, len);
+            let bit_array = BoolBitArray::from_bits(&original_bits);
+            let shift_amount = rng.random_range(-10..10) as isize;
+            let fill_value = rng.random_bool(0.5);
+
+            let result = bit_array
+                .clone()
+                .shift_with_fill(shift_amount as isize, fill_value);
+            assert_eq!(result.len(), len);
+            let shift_abs = usize::min(shift_amount.abs() as usize, len);
+
+            match shift_amount.cmp(&0) {
+                Ordering::Equal => {
+                    assert_eq!(result.to_bits(), original_bits);
+                }
+                Ordering::Less => {
+                    // Negative shift: fill at start
+                    let bits = result.to_bits();
+                    assert!(bits[..shift_abs].iter().all(|&b| b == fill_value));
+                    assert_eq!(&bits[shift_abs..], &original_bits[..len - shift_abs]);
+                }
+                Ordering::Greater => {
+                    // Positive shift: fill at end
+                    let bits = result.to_bits();
+                    assert!(bits[len - shift_abs..].iter().all(|&b| b == fill_value));
+                    assert_eq!(&bits[..len - shift_abs], &original_bits[shift_abs..]);
+                }
+            }
+        }
     }
 }

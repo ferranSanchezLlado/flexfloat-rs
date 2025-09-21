@@ -1,6 +1,8 @@
 #[cfg(feature = "bigint")]
 use num_bigint::{BigInt, BigUint};
-use std::ops::{Index, IndexMut, Range};
+use std::cmp::Ordering;
+use std::hint::unreachable_unchecked;
+use std::ops::{Add, Index, IndexMut, Range};
 
 pub mod boolean_list;
 
@@ -137,6 +139,49 @@ pub trait BitArray {
 
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    fn append_bool_in_place(mut self, value: bool) -> Self
+    where
+        Self: Sized,
+    {
+        let mut bits = self.to_bits();
+        bits.push(value);
+        Self::from_bits(&bits)
+    }
+
+    fn shift_with_fill(self, shift: isize, fill: bool) -> Self
+    where
+        Self: Sized,
+    {
+        if shift == 0 {
+            return self;
+        }
+
+        let bits = self.to_bits();
+        let shift_abs = usize::min(shift.abs() as usize, bits.len());
+        let empty_bits = vec![fill; shift_abs];
+        match shift.cmp(&0) {
+            Ordering::Less => {
+                let mut new_bits = empty_bits;
+                new_bits.extend_from_slice(&bits[..bits.len() - shift_abs]);
+                Self::from_bits(&new_bits)
+            }
+            Ordering::Greater => {
+                let mut new_bits = bits[shift_abs..].to_vec();
+                new_bits.extend_from_slice(&empty_bits);
+                Self::from_bits(&new_bits)
+            }
+            // UNSAFE: This branch is unreachable because zero is handled at the top
+            Ordering::Equal => unsafe { unreachable_unchecked() },
+        }
+    }
+
+    fn shift(self, shift: isize) -> Self
+    where
+        Self: Sized,
+    {
+        self.shift_with_fill(shift, false)
     }
 }
 
