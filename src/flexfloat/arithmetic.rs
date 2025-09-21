@@ -149,7 +149,7 @@ impl<B: BitArray> Add for FlexFloat<B> {
 impl<B: BitArray> Sub for FlexFloat<B> {
     type Output = Self;
 
-    fn sub(self, rhs: Self) -> Self::Output {
+    fn sub(self, _rhs: Self) -> Self::Output {
         unimplemented!()
     }
 }

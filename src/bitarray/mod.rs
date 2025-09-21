@@ -1,8 +1,7 @@
-#[cfg(feature = "bigint")]
 use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
 use std::hint::unreachable_unchecked;
-use std::ops::{Add, Index, IndexMut, Range};
+use std::ops::{Index, IndexMut, Range};
 
 pub mod boolean_list;
 
@@ -40,7 +39,6 @@ pub trait BitArray {
         let bits = value.to_bits();
         Self::from_bytes(&bits.to_le_bytes(), 64)
     }
-    #[cfg(feature = "bigint")]
     fn from_biguint(value: &BigUint) -> Self
     where
         Self: Sized,
@@ -49,7 +47,6 @@ pub trait BitArray {
         let n_bits = bytes.len() * 8;
         Self::from_bytes(&bytes, n_bits)
     }
-    #[cfg(feature = "bigint")]
     fn from_bigint(value: &BigInt, n_bits: usize) -> Option<Self>
     where
         Self: Sized,
@@ -107,11 +104,9 @@ pub trait BitArray {
             .map(|b| if b { '1' } else { '0' })
             .collect()
     }
-    #[cfg(feature = "bigint")]
     fn to_biguint(&self) -> BigUint {
         BigUint::from_bytes_le(&self.to_bytes())
     }
-    #[cfg(feature = "bigint")]
     fn to_bigint(&self) -> BigInt {
         let n_bits = self.len();
         let half = BigInt::from(1u8) << (n_bits - 1);
@@ -141,7 +136,7 @@ pub trait BitArray {
         self.len() == 0
     }
 
-    fn append_bool_in_place(mut self, value: bool) -> Self
+    fn append_bool_in_place(self, value: bool) -> Self
     where
         Self: Sized,
     {
@@ -159,7 +154,7 @@ pub trait BitArray {
         }
 
         let bits = self.to_bits();
-        let shift_abs = usize::min(shift.abs() as usize, bits.len());
+        let shift_abs = usize::min(shift.unsigned_abs(), bits.len());
         let empty_bits = vec![fill; shift_abs];
         match shift.cmp(&0) {
             Ordering::Less => {

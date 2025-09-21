@@ -12,10 +12,6 @@ categories = ["data-structures", "mathematics", "science", "finance", "rust-patt
 edition = "2024"
 exclude = [".github/*"]
 
-[features]
-default = ["bigint"]
-bigint = []
-
 [dependencies]
 num-bigint = { version = "0.4.3" }
 

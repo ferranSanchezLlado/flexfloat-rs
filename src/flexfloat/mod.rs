@@ -80,7 +80,6 @@ impl<B: BitArray> FlexFloat<B> {
 
 impl Debug for FlexFloat<DefaultBitArray> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[cfg(feature = "bigint")]
         {
             f.debug_struct("FlexFloat")
                 .field("sign", if self.sign { &'-' } else { &'+' })
@@ -88,13 +87,13 @@ impl Debug for FlexFloat<DefaultBitArray> {
                 .field("fraction", &self.fraction.to_biguint())
                 .finish()
         }
-        #[cfg(not(feature = "bigint"))]
-        {
-            f.debug_struct("FlexFloat")
-                .field("sign", &self.sign)
-                .field("exponent", &self.exponent.to_bits_string())
-                .field("fraction", &self.fraction.to_bits_string())
-                .finish()
-        }
+        // #[cfg(not(feature = "bigint"))]
+        // {
+        //     f.debug_struct("FlexFloat")
+        //         .field("sign", &self.sign)
+        //         .field("exponent", &self.exponent.to_bits_string())
+        //         .field("fraction", &self.fraction.to_bits_string())
+        //         .finish()
+        // }
     }
 }
