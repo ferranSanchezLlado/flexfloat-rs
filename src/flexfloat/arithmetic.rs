@@ -80,10 +80,10 @@ impl<B: BitArray> Add for FlexFloat<B> {
         }
 
         match (self.is_infinity(), rhs.is_infinity(), self.sign == rhs.sign) {
-            (true, true, true) => return self,              // inf + inf = inf
-            (true, true, false) => return FlexFloat::nan(), // inf + -inf = NaN
-            (true, false, _) => return self,                // inf + x = inf
-            (false, true, _) => return rhs,                 // x + inf = inf
+            (true, true, true) => return self, // inf + inf = inf
+            (true, true, false) => return FlexFloat::new_nan(), // inf + -inf = NaN
+            (true, false, _) => return self,   // inf + x = inf
+            (false, true, _) => return rhs,    // x + inf = inf
             _ => {}
         }
 

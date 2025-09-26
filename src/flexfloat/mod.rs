@@ -21,7 +21,7 @@ impl<B: BitArray> FlexFloat<B> {
         }
     }
 
-    pub fn zero_with_sign(sign: bool) -> Self {
+    pub fn new_zero_with_sign(sign: bool) -> Self {
         Self {
             sign,
             exponent: B::zeros(11),
@@ -29,11 +29,11 @@ impl<B: BitArray> FlexFloat<B> {
         }
     }
 
-    pub fn zero() -> Self {
-        Self::zero_with_sign(false)
+    pub fn new_zero() -> Self {
+        Self::new_zero_with_sign(false)
     }
 
-    pub fn nan() -> Self {
+    pub fn new_nan() -> Self {
         Self {
             sign: false, // Sign doesn't matter for NaN
             exponent: B::ones(11),
@@ -41,7 +41,7 @@ impl<B: BitArray> FlexFloat<B> {
         }
     }
 
-    pub fn infinity(sign: bool) -> Self {
+    pub fn new_infinity(sign: bool) -> Self {
         Self {
             sign,
             exponent: B::ones(11),
@@ -75,6 +75,32 @@ impl<B: BitArray> FlexFloat<B> {
 
     pub fn fraction(&self) -> &B {
         &self.fraction
+    }
+}
+
+impl FlexFloat<DefaultBitArray> {
+    pub fn zero() -> Self {
+        Self::new_zero()
+    }
+
+    pub fn zero_with_sign(sign: bool) -> Self {
+        Self::new_zero_with_sign(sign)
+    }
+
+    pub fn nan() -> Self {
+        Self::new_nan()
+    }
+
+    pub fn pos_infinity() -> Self {
+        Self::new_infinity(false)
+    }
+
+    pub fn neg_infinity() -> Self {
+        Self::new_infinity(true)
+    }
+
+    pub fn infinity(sign: bool) -> Self {
+        Self::new_infinity(sign)
     }
 }
 
