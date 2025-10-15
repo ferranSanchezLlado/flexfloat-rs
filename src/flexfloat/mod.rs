@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use crate::bitarray::{BitArray, DefaultBitArray};
 
 pub mod arithmetic;
+pub mod cmp;
 pub mod converter;
 
 #[derive(Clone)]

@@ -178,6 +178,34 @@ pub trait BitArray {
     {
         self.shift_with_fill(shift, false)
     }
+
+    fn inv(self) -> Self
+    where
+        Self: Sized,
+    {
+        let mut bits = self.to_bits();
+        for i in 0..bits.len() {
+            bits[i] = !bits[i];
+        }
+        Self::from_bits(&bits)
+    }
+
+    fn to_comp2(self)  -> Self
+    where
+        Self: Sized,
+    {
+        let inv = self.inv();
+        
+        // Add 1
+        let mut bits = inv.to_bits();
+        for i in 0..bits.len() {
+            bits[i] = !bits[i];
+            if !bits[i] {
+                break;
+            }
+        }
+        Self::from_bits(&bits)
+    }
 }
 
 macro_rules! impl_index {
