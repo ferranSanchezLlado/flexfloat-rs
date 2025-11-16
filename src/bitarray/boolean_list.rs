@@ -1,6 +1,61 @@
+//! # Boolean List Implementation
+//!
+//! Provides a straightforward BitArray implementation using a Vec<bool> for storage.
+//! This implementation prioritizes simplicity and debugging ease over memory efficiency.
+//!
+//! ## Overview
+//!
+//! `BoolBitArray` stores each bit as a separate boolean value in a vector, making
+//! bit manipulation operations straightforward but using more memory than packed
+//! bit representations.
+//!
+//! ## Characteristics
+//!
+//! - **Memory usage**: 1 byte per bit (8x overhead compared to packed storage)
+//! - **Performance**: Fast individual bit access and modification
+//! - **Debugging**: Easy to inspect and understand bit patterns
+//! - **Simplicity**: Straightforward implementation of BitArray trait
+//!
+//! ## Use Cases
+//!
+//! Best suited for:
+//! - Development and debugging where clarity is important
+//! - Applications where memory usage is not critical
+//! - Frequent individual bit access operations
+//!
+//! ## Examples
+//!
+//! ```rust
+//! use flexfloat::bitarray::{BitArray, BoolBitArray};
+//!
+//! let mut bits = BoolBitArray::from_bits(&[true, false, true]);
+//! bits[1] = true;  // Direct bit modification
+//! assert_eq!(bits[1], true);
+//!
+//! // Range operations
+//! let sub_range = bits.get_range(0..2).unwrap();
+//! assert_eq!(sub_range.to_bits(), vec![true, true]);
+//! ```
+
 use std::ops::{Index, IndexMut, Range};
 
 use crate::bitarray::BitArray;
+
+/// A BitArray implementation using Vec<bool> for bit storage.
+///
+/// This implementation uses one boolean per bit, providing simple and direct
+/// bit manipulation at the cost of memory efficiency. Each bit consumes a full
+/// byte of memory.
+///
+/// # Memory Layout
+///
+/// Bits are stored in order from index 0 to len()-1, with no packing or compression.
+/// This makes debugging and individual bit operations very fast.
+///
+/// # Thread Safety
+///
+/// BoolBitArray is not thread-safe by default. Wrap in appropriate synchronization
+/// primitives when sharing across threads.
 
 #[derive(Debug, Clone)]
 pub struct BoolBitArray {
@@ -80,7 +135,7 @@ impl BitArray for BoolBitArray {
         bytes
     }
 
-    fn iter_bits(&self) -> impl Iterator<Item = bool> {
+    fn iter_bits(&self) -> impl Iterator<Item = bool> + ExactSizeIterator + DoubleEndedIterator {
         self.bits.iter().copied()
     }
 

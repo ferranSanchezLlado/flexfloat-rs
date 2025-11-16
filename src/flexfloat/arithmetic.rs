@@ -1,3 +1,42 @@
+//! # Arithmetic Operations
+//!
+//! Implements fundamental arithmetic operations for FlexFloat with automatic
+//! exponent growth and precision preservation.
+//!
+//! ## Overview
+//!
+//! This module provides arithmetic operations that maintain FlexFloat's key
+//! characteristics: growing exponents when needed and consistent precision
+//! through the fixed-width fraction field.
+//!
+//! ## Exponent Growth Strategy
+//!
+//! When arithmetic operations produce results that exceed the current exponent
+//! range, the exponent field automatically grows to accommodate the new value.
+//! This ensures that FlexFloat can represent arbitrarily large or small numbers
+//! without overflow.
+//!
+//! ## Implemented Operations
+//!
+//! - **Negation**: Sign bit flipping with `Neg` trait
+//! - **Absolute value**: Sign bit clearing
+//! - **Addition/Subtraction**: With automatic exponent expansion (planned)
+//! - **Multiplication/Division**: With precision preservation (planned)
+//!
+//! ## Examples
+//!
+//! ```rust
+//! use flexfloat::FlexFloat;
+//!
+//! let x = FlexFloat::from(3.14);
+//! let neg_x = -x.clone();
+//! let abs_x = x.abs();
+//!
+//! assert_eq!(x.sign(), false);
+//! assert_eq!(neg_x.sign(), true);
+//! assert_eq!(abs_x.sign(), false);
+//! ```
+
 use std::ops::{Add, Neg, Sub};
 
 use num_bigint::BigInt;
@@ -6,6 +45,29 @@ use crate::bitarray::BitArray;
 use crate::flexfloat::FlexFloat;
 
 impl<B: BitArray> FlexFloat<B> {
+    /// Returns the absolute value of this FlexFloat.
+    ///
+    /// Creates a new FlexFloat with the same magnitude but positive sign,
+    /// effectively clearing the sign bit while preserving exponent and fraction.
+    ///
+    /// # Returns
+    ///
+    /// A new FlexFloat representing the absolute value
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
+    /// let negative = FlexFloat::from(-3.14159);
+    /// let positive = negative.abs();
+    ///
+    /// assert!(negative.sign());
+    /// assert!(!positive.sign());
+    /// // Magnitude is preserved
+    /// assert_eq!(negative.exponent().to_bits(), positive.exponent().to_bits());
+    /// assert_eq!(negative.fraction().to_bits(), positive.fraction().to_bits());
+    /// ```
     pub fn abs(&self) -> Self
     where
         B: Clone,
@@ -18,6 +80,22 @@ impl<B: BitArray> FlexFloat<B> {
     }
 }
 
+/// Negation operation for FlexFloat.
+///
+/// Implements the `Neg` trait to provide unary minus operation,
+/// flipping the sign bit while preserving the magnitude.
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::FlexFloat;
+///
+/// let positive = FlexFloat::from(2.71828);
+/// let negative = -positive;
+///
+/// assert!(!positive.sign());
+/// assert!(negative.sign());
+/// ```
 impl<B: BitArray> Neg for FlexFloat<B> {
     type Output = Self;
 
@@ -31,6 +109,36 @@ impl<B: BitArray> Neg for FlexFloat<B> {
 }
 
 impl<B: BitArray> FlexFloat<B> {
+    /// Calculates the minimum exponent bit width needed to represent a given exponent value.
+    ///
+    /// This function implements the core logic for exponent growth, determining
+    /// how many bits are needed to represent an exponent value in two's complement form.
+    ///
+    /// # Arguments
+    ///
+    /// * `exp` - The exponent value as a BigInt
+    /// * `current_len` - Current exponent field width in bits
+    ///
+    /// # Returns
+    ///
+    /// Minimum number of bits needed to represent the exponent
+    ///
+    /// # Algorithm
+    ///
+    /// Uses two's complement representation where for n bits:
+    /// - Minimum value: -2^(n-1)
+    /// - Maximum value: 2^(n-1) - 1
+    ///
+    /// Grows the bit width until the exponent fits within the representable range.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// // This is an internal function, but conceptually:
+    /// // For exponent value 1000:
+    /// // - 11 bits: range [-1024, 1023] ✓ (fits)
+    /// // - 10 bits: range [-512, 511] ✗ (doesn't fit)
+    /// ```
     fn grow_exponent_bits(exp: &BigInt, current_len: usize) -> usize {
         let mut exponent_length = current_len;
         loop {

@@ -1,7 +1,80 @@
+//! # Conversion Utilities
+//!
+//! Provides conversion functions between FlexFloat and standard IEEE 754 double-precision floats.
+//! Handles the mapping between IEEE 754 bit layout and FlexFloat's component structure.
+//!
+//! ## Overview
+//!
+//! This module implements bidirectional conversion between `f64` and `FlexFloat`,
+//! preserving the exact bit patterns and special values defined by IEEE 754.
+//!
+//! ## IEEE 754 Layout
+//!
+//! Standard 64-bit IEEE 754 double-precision format:
+//! ```text
+//! [Sign: 1 bit][Exponent: 11 bits][Fraction: 52 bits]
+//! Bit:  63      62           52   51            0
+//! ```
+//!
+//! ## Conversion Features
+//!
+//! - **Bit-perfect accuracy**: Exact preservation of IEEE 754 bit patterns
+//! - **Special value support**: Correct handling of ±0, ±∞, and NaN
+//! - **Lossless conversion**: No precision loss for values within f64 range
+//! - **Automatic trait implementation**: Seamless From/Into trait integration
+//!
+//! ## Examples
+//!
+//! ```rust
+//! use flexfloat::FlexFloat;
+//!
+//! // Convert from f64
+//! let original = 3.141592653589793;
+//! let flex = FlexFloat::from(original);
+//! 
+//! // Convert back to f64
+//! let recovered: f64 = flex.into();
+//! assert_eq!(original, recovered);
+//!
+//! // Special values
+//! let inf_flex = FlexFloat::from(f64::INFINITY);
+//! assert!(inf_flex.is_infinity());
+//! ```
+
 use crate::bitarray::{BitArray, DefaultBitArray};
 use crate::flexfloat::FlexFloat;
 
 impl<B: BitArray> FlexFloat<B> {
+    /// Creates a FlexFloat from an IEEE 754 double-precision float.
+    ///
+    /// Converts the 64-bit IEEE 754 representation into FlexFloat components,
+    /// extracting the sign, exponent, and fraction fields according to the
+    /// standard bit layout.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The f64 value to convert
+    ///
+    /// # Returns
+    ///
+    /// A new FlexFloat representing the same value
+    ///
+    /// # IEEE 754 Bit Extraction
+    ///
+    /// - Bit 63: Sign bit
+    /// - Bits 62-52: 11-bit exponent field  
+    /// - Bits 51-0: 52-bit fraction field
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
+    /// let flex = FlexFloat::from_f64(2.5);
+    /// assert!(!flex.sign());
+    /// assert_eq!(flex.exponent().len(), 11);
+    /// assert_eq!(flex.fraction().len(), 52);
+    /// ```
     pub fn from_f64(value: f64) -> Self {
         let bits = B::from_f64(value);
 
@@ -12,6 +85,31 @@ impl<B: BitArray> FlexFloat<B> {
         }
     }
 
+    /// Converts this FlexFloat to an IEEE 754 double-precision float.
+    ///
+    /// Reconstructs the 64-bit IEEE 754 representation from the FlexFloat
+    /// components. Returns None if the exponent or fraction fields are too
+    /// small to represent a valid IEEE 754 double.
+    ///
+    /// # Returns
+    ///
+    /// Some(f64) if conversion is possible, None if components are incompatible
+    ///
+    /// # Requirements
+    ///
+    /// - Exponent must have at least 11 bits
+    /// - Fraction must have at least 52 bits
+    /// - Only the first 11 exponent bits and 52 fraction bits are used
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
+    /// let flex = FlexFloat::from(3.14159);
+    /// let f64_val = flex.to_f64().unwrap();
+    /// assert_eq!(f64_val, 3.14159);
+    /// ```
     pub fn to_f64(&self) -> Option<f64> {
         if self.exponent.len() < 11 || self.fraction.len() < 52 {
             return None;
@@ -29,12 +127,46 @@ impl<B: BitArray> FlexFloat<B> {
     }
 }
 
+/// Automatic conversion from f64 to FlexFloat using the default bit array.
+///
+/// This implementation provides seamless conversion from standard IEEE 754
+/// double-precision floats to FlexFloat using the default BitArray implementation.
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::FlexFloat;
+///
+/// let flex: FlexFloat = 3.14159.into();
+/// // or equivalently:
+/// let flex = FlexFloat::from(3.14159);
+/// ```
 impl From<f64> for FlexFloat<DefaultBitArray> {
     fn from(value: f64) -> Self {
         Self::from_f64(value)
     }
 }
 
+/// Automatic conversion from FlexFloat to f64 using the default bit array.
+///
+/// This implementation provides seamless conversion from FlexFloat back to
+/// standard IEEE 754 double-precision floats. Panics if the FlexFloat cannot
+/// be represented as an f64 (e.g., insufficient exponent or fraction bits).
+///
+/// # Panics
+///
+/// Panics if `to_f64()` returns None, indicating the FlexFloat components
+/// are incompatible with IEEE 754 format.
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::FlexFloat;
+///
+/// let flex = FlexFloat::from(2.71828);
+/// let f64_val: f64 = flex.into();
+/// assert_eq!(f64_val, 2.71828);
+/// ```
 impl From<FlexFloat<DefaultBitArray>> for f64 {
     fn from(value: FlexFloat<DefaultBitArray>) -> Self {
         value.to_f64().unwrap()
