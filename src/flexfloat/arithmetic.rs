@@ -257,16 +257,88 @@ impl<B: BitArray> Add for FlexFloat<B> {
 impl<B: BitArray> Sub for FlexFloat<B> {
     type Output = Self;
 
-    fn sub(self, _rhs: Self) -> Self::Output {
-        unimplemented!()
+    fn sub(self, rhs: Self) -> Self::Output {
+        if self.sign != rhs.sign {
+            return self - (-rhs);
+        }
+
+        // 0. Handle special cases (NaN, Infinity).
+        match (self.is_nan(), rhs.is_nan()) {
+            (true, _) => return self,
+            (_, true) => return rhs,
+            _ => {}
+        }
+
+        match (self.is_infinity(), rhs.is_infinity(), self.sign == rhs.sign) {
+            (true, true, true) => return FlexFloat::new_nan(), // inf - inf = Nan
+            (true, true, false) => return self,                // inf - -inf = inf
+            (true, false, _) => return self,                   // inf - x = inf
+            (false, true, _) => return -rhs,                   // x - inf = -inf
+            _ => {}
+        }
+
+        if self < rhs {
+            return -(rhs - self);
+        }
+
+        let mut exp_self = self.exponent.to_bigint() + 1_u8;
+        let exp_rhs = rhs.exponent.to_bigint() + 1_u8;
+
+        let mant_self = self.fraction.append_bool_in_place(true);
+        let mant_rhs = rhs.fraction.append_bool_in_place(true);
+
+        // 4. Shift smaller mantissa if necessary.
+        let exp_diff = exp_self.clone() - exp_rhs.clone();
+        assert!(
+            exp_diff >= BigInt::ZERO,
+            "Self exponent should be larger/equal"
+        );
+        let mant_rhs = mant_rhs.shift(exp_diff.try_into().expect("Exponent difference too large"));
+
+        assert_eq!(mant_self.len(), 53, "Mantissa length should be 53 bits");
+        assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
+
+        // 5. Add mantissas.
+        let mut mantissa_result = B::zeros(53);
+        let mut borrow: i8 = 0;
+        for i in 0..53 {
+            let self_bit = *mant_self.get(i).unwrap() as i8;
+            let rhs_bit = *mant_rhs.get(i).unwrap() as i8;
+            let sum = self_bit - rhs_bit - borrow;
+
+            *mantissa_result.get_mut(i).unwrap() = (sum + 2) % 2 != 0;
+            borrow = (sum < 0) as i8;
+            assert!(borrow <= 1);
+        }
+
+        assert!(borrow == 0, "Should not have borrow after subtraction");
+
+        // Find leading zeros for normalization
+        let first_one_pos = mantissa_result.iter_bits().rposition(|b| b);
+        if let Some(first_one_pos) = first_one_pos {
+            let shift = first_one_pos as isize - 52;
+            mantissa_result = mantissa_result.shift(shift);
+            exp_self -= BigInt::from(shift.abs() as u32);
+        }
+
+        // 7. Grow exponent if necessary. (no limit on size)
+        let exp_result_length = Self::grow_exponent_bits(&exp_self, self.exponent.len());
+
+        let exponent_result = B::from_bigint(&(exp_self - 1_u8), exp_result_length)
+            .expect("Exponent lenght should have grown");
+        let fraction_result = B::from_bits(&mantissa_result.to_bits()[..52]);
+        FlexFloat {
+            sign: self.sign,
+            exponent: exponent_result,
+            fraction: fraction_result,
+        }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use rand::Rng;
     use rstest::rstest;
-
-    use crate::bitarray::DefaultBitArray;
 
     use super::*;
     use crate::tests::*;
@@ -289,21 +361,21 @@ mod tests {
     #[rstest]
     fn test_add(mut rng: impl Rng, n_experiments: usize) {
         // Test random basic case
-        let a = FlexFloat::<DefaultBitArray>::from_f64(1.5);
-        let b = FlexFloat::<DefaultBitArray>::from_f64(2.25);
+        let a = FlexFloat::from(1.5);
+        let b = FlexFloat::from(2.25);
         let c = a + b;
         assert_eq!(c.to_f64(), Some(3.75));
 
         // Test overflow case
-        let a = FlexFloat::<DefaultBitArray>::from_f64(f64::MAX);
-        let b = FlexFloat::<DefaultBitArray>::from_f64(f64::MAX / 2.0);
+        let a = FlexFloat::from(f64::MAX);
+        let b = FlexFloat::from(f64::MAX / 2.0);
         let c = a + b;
         assert!(!c.is_infinity(), "Result should not overflow");
         assert!(c.exponent.len() > 11, "Exponent should have grown");
 
         // Test wierd edge case
-        let a = FlexFloat::<DefaultBitArray>::from_f64(f64::MAX);
-        let b = FlexFloat::<DefaultBitArray>::from_f64(f64::MIN_POSITIVE);
+        let a = FlexFloat::from(f64::MAX);
+        let b = FlexFloat::from(f64::MIN_POSITIVE);
         let c = a + b;
         assert_eq!(c.to_f64(), Some(f64::MAX));
 
@@ -312,8 +384,8 @@ mod tests {
             let b: f64 = rng.random();
             let expected = a + b;
 
-            let fa = FlexFloat::<DefaultBitArray>::from_f64(a);
-            let fb = FlexFloat::<DefaultBitArray>::from_f64(b);
+            let fa = FlexFloat::from(a);
+            let fb = FlexFloat::from(b);
             let fc = fa + fb;
 
             if expected.is_infinite() {
@@ -331,6 +403,54 @@ mod tests {
                 result,
                 expected,
                 format!("Failed on {} + {}", a, b).as_str(),
+            );
+        }
+    }
+
+    #[rstest]
+    fn test_sub(mut rng: impl Rng, n_experiments: usize) {
+        let a = FlexFloat::from(1.5);
+        let b = FlexFloat::from(2.25);
+        let c = a - b;
+        assert_eq!(c.to_f64(), Some(-0.75));
+
+        // Test overflow case
+        // let a = FlexFloat::from(-f64::MAX);
+        // let b = FlexFloat::from(f64::MAX / 2.0);
+        // let c = a - b;
+        // assert!(!c.is_infinity(), "Result should not overflow");
+        // assert!(c.exponent.len() > 11, "Exponent should have grown");
+
+        // Test wierd edge case
+        let a = FlexFloat::from(f64::MAX);
+        let b = FlexFloat::from(f64::MIN_POSITIVE);
+        let c = a - b;
+        assert_eq!(c.to_f64(), Some(f64::MAX));
+
+        for _ in 0..n_experiments {
+            let a: f64 = rng.random();
+            let b: f64 = rng.random();
+            let expected = a - b;
+
+            let fa = FlexFloat::from(a);
+            let fb = FlexFloat::from(b);
+            let fc = fa - fb;
+
+            if expected.is_infinite() {
+                // TODO: check fc is larger tha f64::MAX)
+                continue;
+            }
+
+            if expected.is_nan() {
+                assert!(fc.is_nan());
+                continue;
+            }
+
+            let result = fc.to_f64().expect("Result should fit in f64");
+            assert_almost_eq(
+                result,
+                expected,
+                format!("Failed on {} - {}", a, b).as_str(),
             );
         }
     }
