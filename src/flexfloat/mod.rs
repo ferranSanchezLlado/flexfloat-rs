@@ -34,7 +34,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use flexfloat::FlexFloat;
+//! use flexfloat::prelude::*;
 //!
 //! // Basic construction
 //! let x = FlexFloat::from(3.14159);
@@ -99,10 +99,10 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::{FlexFloat, bitarray::{BitArray, BoolBitArray}};
+    /// use flexfloat::prelude::*;
     ///
-    /// let exp = BoolBitArray::from_bits(&[true, false, true]);
-    /// let frac = BoolBitArray::zeros(52);
+    /// let exp = DefaultBitArray::from_bits(&[true, false, true]);
+    /// let frac = DefaultBitArray::zeros(52);
     /// let num = FlexFloat::new(false, exp, frac);
     /// ```
     pub fn new(sign: bool, exponent: B, fraction: B) -> Self {
@@ -122,10 +122,13 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
-    /// let pos_zero = FlexFloat::new_zero_with_sign(false);
-    /// let neg_zero = FlexFloat::new_zero_with_sign(true);
+    /// let pos_zero: FlexFloat<DefaultBitArray> = FlexFloat::new_zero_with_sign(false);
+    /// let neg_zero: FlexFloat<DefaultBitArray> = FlexFloat::new_zero_with_sign(true);
+    ///
+    /// assert!(pos_zero.is_zero() && !pos_zero.sign());
+    /// assert!(neg_zero.is_zero() && neg_zero.sign());
     /// ```
     pub fn new_zero_with_sign(sign: bool) -> Self {
         Self {
@@ -140,9 +143,9 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
-    /// let zero = FlexFloat::new_zero();
+    /// let zero: FlexFloat<DefaultBitArray> = FlexFloat::new_zero();
     /// assert!(zero.is_zero() && !zero.sign());
     /// ```
     pub fn new_zero() -> Self {
@@ -154,9 +157,9 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
-    /// let nan = FlexFloat::new_nan();
+    /// let nan: FlexFloat<DefaultBitArray> = FlexFloat::new_nan();
     /// assert!(nan.is_nan());
     /// ```
     pub fn new_nan() -> Self {
@@ -176,10 +179,12 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
-    /// let pos_inf = FlexFloat::new_infinity(false);
-    /// let neg_inf = FlexFloat::new_infinity(true);
+    /// let pos_inf: FlexFloat<DefaultBitArray> = FlexFloat::new_infinity(false);
+    /// let neg_inf: FlexFloat<DefaultBitArray> = FlexFloat::new_infinity(true);
+    /// assert!(pos_inf.is_infinity() && !pos_inf.sign());
+    /// assert!(neg_inf.is_infinity() && neg_inf.sign());
     /// ```
     pub fn new_infinity(sign: bool) -> Self {
         Self {
@@ -278,7 +283,7 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
     /// let num = FlexFloat::from(8.0);
     /// println!("Exponent has {} bits", num.exponent().len());
@@ -292,7 +297,7 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
     /// let num = FlexFloat::from(3.14159);
     /// println!("Fraction has {} bits", num.fraction().len());
@@ -315,8 +320,10 @@ impl FlexFloat<DefaultBitArray> {
     /// # Examples
     ///
     /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
     /// let zero = FlexFloat::zero();
-    /// assert_eq!(zero.to_f64(), 0.0);
+    /// assert_eq!(zero.to_f64(), Some(0.0));
     /// ```
     pub fn zero() -> Self {
         Self::new_zero()
@@ -338,6 +345,8 @@ impl FlexFloat<DefaultBitArray> {
     /// # Examples
     ///
     /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
     /// let pos_zero = FlexFloat::zero_with_sign(false);
     /// let neg_zero = FlexFloat::zero_with_sign(true);
     /// assert!(pos_zero.is_zero() && !pos_zero.sign());
@@ -359,6 +368,8 @@ impl FlexFloat<DefaultBitArray> {
     /// # Examples
     ///
     /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
     /// let nan = FlexFloat::nan();
     /// assert!(nan.is_nan());
     /// ```
@@ -378,6 +389,8 @@ impl FlexFloat<DefaultBitArray> {
     /// # Examples
     ///
     /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
     /// let pos_inf = FlexFloat::pos_infinity();
     /// assert!(pos_inf.is_infinity());
     /// assert!(!pos_inf.sign());
@@ -398,6 +411,8 @@ impl FlexFloat<DefaultBitArray> {
     /// # Examples
     ///
     /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
     /// let neg_inf = FlexFloat::neg_infinity();
     /// assert!(neg_inf.is_infinity());
     /// assert!(neg_inf.sign());
@@ -422,6 +437,8 @@ impl FlexFloat<DefaultBitArray> {
     /// # Examples
     ///
     /// ```rust
+    /// use flexfloat::FlexFloat;
+    ///
     /// let pos_inf = FlexFloat::infinity(false);
     /// let neg_inf = FlexFloat::infinity(true);
     /// assert!(pos_inf.is_infinity() && !pos_inf.sign());

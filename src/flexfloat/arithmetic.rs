@@ -57,7 +57,7 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
     /// let negative = FlexFloat::from(-3.14159);
     /// let positive = negative.abs();
@@ -91,7 +91,7 @@ impl<B: BitArray> FlexFloat<B> {
 /// use flexfloat::FlexFloat;
 ///
 /// let positive = FlexFloat::from(2.71828);
-/// let negative = -positive;
+/// let negative = -positive.clone();
 ///
 /// assert!(!positive.sign());
 /// assert!(negative.sign());
@@ -318,7 +318,7 @@ impl<B: BitArray> Sub for FlexFloat<B> {
         if let Some(first_one_pos) = first_one_pos {
             let shift = first_one_pos as isize - 52;
             mantissa_result = mantissa_result.shift(shift);
-            exp_self -= BigInt::from(shift.abs() as u32);
+            exp_self -= BigInt::from(shift.unsigned_abs());
         }
 
         // 7. Grow exponent if necessary. (no limit on size)

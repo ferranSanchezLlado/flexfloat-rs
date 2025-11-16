@@ -31,7 +31,7 @@
 //! // Convert from f64
 //! let original = 3.141592653589793;
 //! let flex = FlexFloat::from(original);
-//! 
+//!
 //! // Convert back to f64
 //! let recovered: f64 = flex.into();
 //! assert_eq!(original, recovered);
@@ -68,9 +68,9 @@ impl<B: BitArray> FlexFloat<B> {
     /// # Examples
     ///
     /// ```rust
-    /// use flexfloat::FlexFloat;
+    /// use flexfloat::prelude::*;
     ///
-    /// let flex = FlexFloat::from_f64(2.5);
+    /// let flex: FlexFloat<DefaultBitArray> = FlexFloat::from_f64(2.5);
     /// assert!(!flex.sign());
     /// assert_eq!(flex.exponent().len(), 11);
     /// assert_eq!(flex.fraction().len(), 52);
@@ -135,9 +135,9 @@ impl<B: BitArray> FlexFloat<B> {
 /// # Examples
 ///
 /// ```rust
-/// use flexfloat::FlexFloat;
+/// use flexfloat::prelude::*;
 ///
-/// let flex: FlexFloat = 3.14159.into();
+/// let flex: FlexFloat<_> = 3.14159.into();
 /// // or equivalently:
 /// let flex = FlexFloat::from(3.14159);
 /// ```

@@ -364,7 +364,7 @@ pub trait BitArray {
     /// # Returns
     ///
     /// Iterator yielding each bit as a boolean value
-    fn iter_bits(&self) -> impl Iterator<Item = bool> + ExactSizeIterator + DoubleEndedIterator;
+    fn iter_bits(&self) -> impl ExactSizeIterator<Item = bool> + DoubleEndedIterator;
 
     /// Returns the number of bits in the array.
     ///
@@ -486,9 +486,8 @@ pub trait BitArray {
     ///
     /// let bits = BoolBitArray::from_bits(&[true, false, true]);
     /// let shifted = bits.shift_with_fill(1, false);
-    /// // Result: [false, true, false] (right shift, fill with false)
+    /// assert_eq!(shifted.to_bits(), vec![false, true, false]);
     /// ```
-
     fn shift_with_fill(self, shift: isize, fill: bool) -> Self
     where
         Self: Sized,

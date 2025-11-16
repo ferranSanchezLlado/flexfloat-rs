@@ -1,6 +1,6 @@
 //! # Boolean List Implementation
 //!
-//! Provides a straightforward BitArray implementation using a Vec<bool> for storage.
+//! Provides a straightforward BitArray implementation using a `Vec<bool>` for storage.
 //! This implementation prioritizes simplicity and debugging ease over memory efficiency.
 //!
 //! ## Overview
@@ -41,7 +41,7 @@ use std::ops::{Index, IndexMut, Range};
 
 use crate::bitarray::BitArray;
 
-/// A BitArray implementation using Vec<bool> for bit storage.
+/// A BitArray implementation using `Vec<bool>` for bit storage.
 ///
 /// This implementation uses one boolean per bit, providing simple and direct
 /// bit manipulation at the cost of memory efficiency. Each bit consumes a full
@@ -135,7 +135,7 @@ impl BitArray for BoolBitArray {
         bytes
     }
 
-    fn iter_bits(&self) -> impl Iterator<Item = bool> + ExactSizeIterator + DoubleEndedIterator {
+    fn iter_bits(&self) -> impl ExactSizeIterator<Item = bool> + DoubleEndedIterator {
         self.bits.iter().copied()
     }
 

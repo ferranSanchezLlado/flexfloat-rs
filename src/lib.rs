@@ -70,6 +70,16 @@ pub mod flexfloat;
 pub use bitarray::{BitArray, BoolBitArray, DefaultBitArray};
 pub use flexfloat::FlexFloat;
 
+pub mod prelude {
+    //! Prelude module for FlexFloat.
+    //!
+    //! This module re-exports commonly used types and traits from the FlexFloat crate,
+    //! allowing for easier imports in user code.
+
+    pub use crate::bitarray::*;
+    pub use crate::flexfloat::FlexFloat;
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::OnceLock;
