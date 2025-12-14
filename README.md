@@ -184,3 +184,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Note**: FlexFloat is designed for applications requiring extended range floating-point arithmetic while maintaining precision consistency. For applications needing arbitrary precision (variable mantissa), consider `BigDecimal` or similar libraries.
+
+## Git hook: Local pre-commit checks
+
+This repository includes a local Git hook that runs the same checks as the project's CI workflow (format check, clippy, tests, builds, and docs). The hook lives in `.githooks/pre-commit` and is not enabled by default.
+
+To enable the hook locally run:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+Note: these checks may be slow (they run the full test/build matrix) — you can skip the hook temporarily with `git commit --no-verify` when necessary.
