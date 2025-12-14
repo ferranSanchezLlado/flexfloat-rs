@@ -90,14 +90,18 @@ mod tests {
     static SEED: OnceLock<u64> = OnceLock::new();
 
     #[fixture]
-    pub fn n_experiments() -> usize {
-        10000
+    pub const fn n_experiments() -> usize {
+        100_000
     }
 
     #[fixture]
-    pub fn rng(n_experiments: usize) -> impl Rng {
-        let seed = *SEED.get_or_init(|| rand::rng().random());
-        println!("Seed: {} (for {} experiments)", seed, n_experiments);
+    pub fn seed() -> u64 {
+        *SEED.get_or_init(|| rand::rng().random())
+    }
+
+    #[fixture]
+    pub fn rng(n_experiments: usize, seed: u64) -> impl Rng {
+        println!("{} experiments with seed {}", n_experiments, seed);
         StdRng::seed_from_u64(seed)
     }
 }

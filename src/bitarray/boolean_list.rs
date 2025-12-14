@@ -400,6 +400,15 @@ mod tests {
         test_to_float(&mut rng, n_experiments);
     }
 
+    fn rstrip_zeros(mut bytes: Vec<u8>) -> Vec<u8> {
+        if let Some(pos) = bytes.iter().rposition(|&b| b != 0) {
+            bytes.truncate(pos + 1);
+        } else {
+            bytes.clear();
+        }
+        bytes
+    }
+
     fn test_from_biguint(mut rng: impl Rng, n_experiments: usize) {
         // Test with a known value
         let biguint = BigUint::from(0b11110000u8);
@@ -410,7 +419,7 @@ mod tests {
         // Test with zero
         let biguint = BigUint::from(0u8);
         let bit_array = BoolBitArray::from_biguint(&biguint);
-        assert_eq!(bit_array.bits, vec![false; 8]);
+        assert_eq!(bit_array.bits, vec![]);
 
         // Test with larger known values
         let biguint = BigUint::from(0x1234u16);
@@ -419,18 +428,18 @@ mod tests {
         // But stored as LSB first: [0,0,1,0,1,1,0,0,0,1,0,0,1,0,0,0]
         let expected_bits = vec![
             false, false, true, false, true, true, false, false, // 0x34 = 52
-            false, true, false, false, true, false, false, false, // 0x12 = 18
+            false, true, false, false, true, // 0x12 = 18
         ];
         assert_eq!(bit_array.bits, expected_bits);
 
         for _ in 0..n_experiments {
             let n_bits = rng.random_range(1..100);
             let biguint = random_biguint(&mut rng, n_bits);
-            let bit_array = BoolBitArray::from_biguint(&biguint);
+            let bit_array = BoolBitArray::from_biguint_fixed(&biguint, n_bits);
 
             // Verify by checking the bytes directly
-            let expected_bytes = biguint.to_bytes_le();
-            let actual_bytes = bit_array.to_bytes();
+            let expected_bytes = rstrip_zeros(biguint.to_bytes_le());
+            let actual_bytes = rstrip_zeros(bit_array.to_bytes());
 
             assert_eq!(actual_bytes, expected_bytes);
         }

@@ -40,6 +40,7 @@
 use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
 use std::hint::unreachable_unchecked;
+use std::iter::repeat_n;
 use std::ops::{Index, IndexMut, Range};
 
 pub mod boolean_list;
@@ -177,7 +178,15 @@ pub trait BitArray {
         Self: Sized,
     {
         let bytes = value.to_bytes_le();
-        let n_bits = bytes.len() * 8;
+        let n_bits = value.bits() as usize;
+        Self::from_bytes(&bytes, n_bits)
+    }
+
+    fn from_biguint_fixed(value: &BigUint, n_bits: usize) -> Self
+    where
+        Self: Sized,
+    {
+        let bytes = value.to_bytes_le();
         Self::from_bytes(&bytes, n_bits)
     }
 
@@ -531,6 +540,18 @@ pub trait BitArray {
         Self: Sized,
     {
         self.shift_with_fill(shift, false)
+    }
+
+    fn append_repeated(self, value: bool, count: usize) -> Self
+    where
+        Self: Sized,
+    {
+        if count == 0 {
+            return self;
+        }
+        let mut bits = self.to_bits();
+        bits.extend(repeat_n(value, count));
+        Self::from_bits(&bits)
     }
 }
 

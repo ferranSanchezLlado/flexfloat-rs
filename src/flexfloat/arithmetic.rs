@@ -37,7 +37,8 @@
 //! assert_eq!(abs_x.sign(), false);
 //! ```
 
-use std::ops::{Add, Neg, Sub};
+use std::cmp::{max, min};
+use std::ops::{Add, Mul, Neg, Sub};
 
 use num_bigint::BigInt;
 
@@ -314,9 +315,9 @@ impl<B: BitArray> Sub for FlexFloat<B> {
         assert!(borrow == 0, "Should not have borrow after subtraction");
 
         // Find leading zeros for normalization
-        let first_one_pos = mantissa_result.iter_bits().rposition(|b| b);
-        if let Some(first_one_pos) = first_one_pos {
-            let shift = first_one_pos as isize - 52;
+        let msb_pos = mantissa_result.iter_bits().rposition(|b| b);
+        if let Some(msb_pos) = msb_pos {
+            let shift = msb_pos as isize - 52;
             mantissa_result = mantissa_result.shift(shift);
             exp_self -= BigInt::from(shift.unsigned_abs());
         }
@@ -335,6 +336,65 @@ impl<B: BitArray> Sub for FlexFloat<B> {
     }
 }
 
+impl<B: BitArray> Mul for FlexFloat<B> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        // 0. Handle special cases (NaN, Infinity).
+        if self.is_nan() || rhs.is_nan() {
+            return Self::new_nan();
+        }
+
+        if (self.is_infinity() && rhs.is_zero()) || (self.is_zero() && rhs.is_infinity()) {
+            return Self::new_nan();
+        }
+
+        let sign = self.sign ^ rhs.sign;
+        if self.is_zero() || rhs.is_zero() {
+            return Self::new_zero_with_sign(sign);
+        }
+
+        if self.is_infinity() || rhs.is_infinity() {
+            return Self::new_infinity(sign);
+        }
+
+        let exp_self = self.exponent.to_bigint() + 1_u8;
+        let exp_rhs = rhs.exponent.to_bigint() + 1_u8;
+        let mut exp_res = exp_self + exp_rhs;
+
+        let mant_self_int = self.fraction.append_bool_in_place(true).to_biguint();
+        let mant_rhs_int = rhs.fraction.append_bool_in_place(true).to_biguint();
+
+        let mant_res_int = mant_self_int * mant_rhs_int;
+
+        // Grow mantissa if necessary (it can be up to 106 bits)
+        let mut mant_res = B::from_biguint_fixed(&mant_res_int, 106);
+
+        let msb_pos = mant_res.iter_bits().rposition(|b| b).unwrap();
+
+        // Adjust exponent based on MSB position (normalize the result)
+        exp_res += BigInt::from(msb_pos) - 104;
+
+        let lsb_pos = max(msb_pos - 52, 0);
+        let msb_pos_end = min(msb_pos + 1, mant_res.len());
+        mant_res = mant_res.get_range(lsb_pos..msb_pos_end).unwrap();
+
+        // 7. Grow exponent if necessary (no limit on size)
+        let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
+        let exp_result_length = Self::grow_exponent_bits(&exp_res, max_exp_len);
+
+        let exp_res = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
+            .expect("Exponent lenght should have grown");
+        let fraction_result = B::from_bits(&mant_res.to_bits()[..52]);
+
+        Self {
+            sign,
+            exponent: exp_res,
+            fraction: fraction_result,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rand::Rng;
@@ -343,41 +403,40 @@ mod tests {
     use super::*;
     use crate::tests::*;
 
-    fn assert_almost_eq_within(a: f64, b: f64, epsilon: f64, message: &str) {
+    const EPSILON: f64 = 1e-10;
+
+    #[track_caller]
+    fn assert_almost_eq(a: f64, b: f64, message: &str) {
         assert!(
-            (a - b).abs() <= epsilon,
+            (a - b).abs() <= EPSILON,
             "{}: {} and {} differ more than {}",
             message,
             a,
             b,
-            epsilon
+            EPSILON
         );
-    }
-
-    fn assert_almost_eq(a: f64, b: f64, message: &str) {
-        assert_almost_eq_within(a, b, 1e-10, message);
     }
 
     #[rstest]
     fn test_add(mut rng: impl Rng, n_experiments: usize) {
         // Test random basic case
-        let a = FlexFloat::from(1.5);
-        let b = FlexFloat::from(2.25);
-        let c = a + b;
-        assert_eq!(c.to_f64(), Some(3.75));
+        let a = 1.5;
+        let b = 2.25;
+        let c = FlexFloat::from(a) + FlexFloat::from(b);
+        assert_eq!(c.to_f64(), Some(a + b));
 
         // Test overflow case
-        let a = FlexFloat::from(f64::MAX);
-        let b = FlexFloat::from(f64::MAX / 2.0);
-        let c = a + b;
+        let a = f64::MAX;
+        let b = f64::MAX / 2.0;
+        let c = FlexFloat::from(a) + FlexFloat::from(b);
         assert!(!c.is_infinity(), "Result should not overflow");
         assert!(c.exponent.len() > 11, "Exponent should have grown");
 
         // Test wierd edge case
-        let a = FlexFloat::from(f64::MAX);
-        let b = FlexFloat::from(f64::MIN_POSITIVE);
-        let c = a + b;
-        assert_eq!(c.to_f64(), Some(f64::MAX));
+        let a = f64::MAX;
+        let b = f64::MIN_POSITIVE;
+        let c = FlexFloat::from(a) + FlexFloat::from(b);
+        assert_eq!(c.to_f64(), Some(a + b));
 
         for _ in 0..n_experiments {
             let a: f64 = rng.random();
@@ -409,10 +468,10 @@ mod tests {
 
     #[rstest]
     fn test_sub(mut rng: impl Rng, n_experiments: usize) {
-        let a = FlexFloat::from(1.5);
-        let b = FlexFloat::from(2.25);
-        let c = a - b;
-        assert_eq!(c.to_f64(), Some(-0.75));
+        let a = 1.5;
+        let b = 2.25;
+        let c = FlexFloat::from(a) - FlexFloat::from(b);
+        assert_eq!(c.to_f64(), Some(a - b));
 
         // Test overflow case
         // let a = FlexFloat::from(-f64::MAX);
@@ -422,10 +481,10 @@ mod tests {
         // assert!(c.exponent.len() > 11, "Exponent should have grown");
 
         // Test wierd edge case
-        let a = FlexFloat::from(f64::MAX);
-        let b = FlexFloat::from(f64::MIN_POSITIVE);
-        let c = a - b;
-        assert_eq!(c.to_f64(), Some(f64::MAX));
+        let a = f64::MAX;
+        let b = f64::MIN_POSITIVE;
+        let c = FlexFloat::from(a) - FlexFloat::from(b);
+        assert_eq!(c.to_f64(), Some(a - b));
 
         for _ in 0..n_experiments {
             let a: f64 = rng.random();
@@ -451,6 +510,55 @@ mod tests {
                 result,
                 expected,
                 format!("Failed on {} - {}", a, b).as_str(),
+            );
+        }
+    }
+
+    #[rstest]
+    fn test_mul(mut rng: impl Rng, n_experiments: usize) {
+        let a = 1.5;
+        let b = 2.25;
+        let c = FlexFloat::from(a) * FlexFloat::from(b);
+        assert_eq!(c.to_f64(), Some(a * b));
+
+        let a = 0.123;
+        let b = 0.321;
+        let c = FlexFloat::from(a) * FlexFloat::from(b);
+        assert_eq!(c.to_f64(), Some(a * b));
+
+        // Test overflow case
+        let a = f64::MAX;
+        let b = 100.0;
+        let c = FlexFloat::from(a) * FlexFloat::from(b);
+        assert!(!c.is_infinity(), "Result should not overflow");
+        assert!(c.exponent.len() > 11, "Exponent should have grown");
+
+        // TODO: Test wierd edge case
+
+        for _ in 0..n_experiments {
+            let a: f64 = rng.random();
+            let b: f64 = rng.random();
+            let expected = a * b;
+
+            let fa = FlexFloat::from(a);
+            let fb = FlexFloat::from(b);
+            let fc = fa * fb;
+
+            if expected.is_infinite() {
+                // TODO: check fc is larger tha f64::MAX)
+                continue;
+            }
+
+            if expected.is_nan() {
+                assert!(fc.is_nan());
+                continue;
+            }
+
+            let result = fc.to_f64().expect("Result should fit in f64");
+            assert_almost_eq(
+                result,
+                expected,
+                format!("Failed on {} * {}", a, b).as_str(),
             );
         }
     }
