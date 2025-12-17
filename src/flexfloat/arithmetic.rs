@@ -137,23 +137,11 @@ impl<B: BitArray> FlexFloat<B> {
     /// ```rust
     /// // This is an internal function, but conceptually:
     /// // For exponent value 1000:
-    /// // - 11 bits: range [-1024, 1023] ✓ (fits)
-    /// // - 10 bits: range [-512, 511] ✗ (doesn't fit)
+    /// // - 11 bits: range [-1024, 1023] (fits)
+    /// // - 10 bits: range [-512, 511] (doesn't fit)
     /// ```
     fn grow_exponent_bits(exp: &BigInt, current_len: usize) -> usize {
-        let mut exponent_length = current_len;
-        loop {
-            let half = 1 << (exponent_length - 1);
-            let min_exponent = BigInt::from(-half);
-            let max_exponent = BigInt::from(half - 1);
-
-            if &min_exponent <= exp && exp <= &max_exponent {
-                break;
-            }
-            exponent_length += 1;
-        }
-
-        exponent_length
+        max(current_len, exp.bits() as usize + 1) // +1 for sign bit
     }
 }
 
@@ -212,7 +200,7 @@ impl<B: BitArray> Add for FlexFloat<B> {
         let mant_rhs = rhs.fraction.append_bool_in_place(true);
 
         // 4. Shift smaller mantissa if necessary.
-        let exp_diff = exp_self.clone() - exp_rhs.clone();
+        let exp_diff = &exp_self - exp_rhs;
         assert!(
             exp_diff >= BigInt::ZERO,
             "Self exponent should be larger/equal"
@@ -223,34 +211,25 @@ impl<B: BitArray> Add for FlexFloat<B> {
         assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
 
         // 5. Add mantissas.
-        let mut mantissa_result = B::zeros(53);
-        let mut carry: u8 = 0;
-        for i in 0..53 {
-            let self_bit = *mant_self.get(i).unwrap() as u8;
-            let rhs_bit = *mant_rhs.get(i).unwrap() as u8;
-            let sum = self_bit + rhs_bit + carry;
-
-            *mantissa_result.get_mut(i).unwrap() = !sum.is_multiple_of(2);
-            carry = sum / 2;
-            assert!(carry <= 1);
-        }
-
+        let mut mantissa_result_uint = mant_self.to_biguint() + mant_rhs.to_biguint();
         // 6. Normalize mantissa and adjust exponent if necessary.
-        if carry > 0 {
-            mantissa_result = mantissa_result.shift(1);
+        if mantissa_result_uint.bits() > 53 {
+            // Need to normalize
             exp_self += 1_u8;
+            mantissa_result_uint >>= 1;
         }
+        let mantissa_result = B::from_biguint_fixed(&mantissa_result_uint, 53);
 
         // 7. Grow exponent if necessary. (no limit on size)
-        let exp_result_length = Self::grow_exponent_bits(&exp_self, self.exponent.len());
+        let n_bits_exp = Self::grow_exponent_bits(&exp_self, self.exponent.len());
 
-        let exponent_result = B::from_bigint(&(exp_self - 1_u8), exp_result_length)
-            .expect("Exponent lenght should have grown");
-        let fraction_result = B::from_bits(&mantissa_result.to_bits()[..52]);
+        let exponent = B::from_bigint(&(exp_self - 1_u8), n_bits_exp)
+            .expect("Exponent length should have grown");
+        let fraction = mantissa_result.truncate(52);
         FlexFloat {
             sign: self.sign,
-            exponent: exponent_result,
-            fraction: fraction_result,
+            exponent,
+            fraction,
         }
     }
 }
@@ -299,39 +278,29 @@ impl<B: BitArray> Sub for FlexFloat<B> {
         assert_eq!(mant_self.len(), 53, "Mantissa length should be 53 bits");
         assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
 
-        // 5. Add mantissas.
-        let mut mantissa_result = B::zeros(53);
-        let mut borrow: i8 = 0;
-        for i in 0..53 {
-            let self_bit = *mant_self.get(i).unwrap() as i8;
-            let rhs_bit = *mant_rhs.get(i).unwrap() as i8;
-            let sum = self_bit - rhs_bit - borrow;
-
-            *mantissa_result.get_mut(i).unwrap() = (sum + 2) % 2 != 0;
-            borrow = (sum < 0) as i8;
-            assert!(borrow <= 1);
-        }
-
-        assert!(borrow == 0, "Should not have borrow after subtraction");
+        // 5. Subtract mantissas.
+        let mut mantissa_result_uint = mant_self.to_biguint() - mant_rhs.to_biguint();
 
         // Find leading zeros for normalization
-        let msb_pos = mantissa_result.iter_bits().rposition(|b| b);
-        if let Some(msb_pos) = msb_pos {
-            let shift = msb_pos as isize - 52;
-            mantissa_result = mantissa_result.shift(shift);
-            exp_self -= BigInt::from(shift.unsigned_abs());
+        let msb_pos = mantissa_result_uint.bits();
+        let shift = msb_pos as isize - 53;
+        if shift < 0 {
+            mantissa_result_uint <<= shift.unsigned_abs();
+        } else if shift > 0 {
+            mantissa_result_uint >>= shift as usize;
         }
+        exp_self += BigInt::from(shift);
+        let mantissa_result = B::from_biguint_fixed(&mantissa_result_uint, 53);
 
         // 7. Grow exponent if necessary. (no limit on size)
-        let exp_result_length = Self::grow_exponent_bits(&exp_self, self.exponent.len());
-
-        let exponent_result = B::from_bigint(&(exp_self - 1_u8), exp_result_length)
-            .expect("Exponent lenght should have grown");
-        let fraction_result = B::from_bits(&mantissa_result.to_bits()[..52]);
+        let n_bits_exp = Self::grow_exponent_bits(&exp_self, self.exponent.len());
+        let exponent = B::from_bigint(&(exp_self - 1_u8), n_bits_exp)
+            .expect("Exponent length should have grown");
+        let fraction = mantissa_result.truncate(52);
         FlexFloat {
             sign: self.sign,
-            exponent: exponent_result,
-            fraction: fraction_result,
+            exponent,
+            fraction,
         }
     }
 }
@@ -383,14 +352,14 @@ impl<B: BitArray> Mul for FlexFloat<B> {
         let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
         let exp_result_length = Self::grow_exponent_bits(&exp_res, max_exp_len);
 
-        let exp_res = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
-            .expect("Exponent lenght should have grown");
-        let fraction_result = B::from_bits(&mant_res.to_bits()[..52]);
+        let exponent = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
+            .expect("Exponent length should have grown");
+        let fraction = mant_res.truncate(52);
 
         Self {
             sign,
-            exponent: exp_res,
-            fraction: fraction_result,
+            exponent,
+            fraction,
         }
     }
 }
@@ -434,7 +403,7 @@ impl<B: BitArray> Div for FlexFloat<B> {
         let mant_self_int = self.fraction.append_bool_in_place(true).to_biguint();
         let mant_rhs_int = rhs.fraction.append_bool_in_place(true).to_biguint();
         // We shift by 52 to produce 53 bits (1 implicit + 52 fraction) of precision.
-        let mant_res_int: BigUint = (mant_self_int << 52) / &mant_rhs_int;
+        let mant_res_int: BigUint = (mant_self_int << 52) / mant_rhs_int;
 
         // If result is zero, return signed zero.
         if mant_res_int == BigUint::ZERO {
@@ -458,14 +427,14 @@ impl<B: BitArray> Div for FlexFloat<B> {
         let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
         let exp_result_length = Self::grow_exponent_bits(&exp_res, max_exp_len);
 
-        let exp_res = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
-            .expect("Exponent lenght should have grown");
-        let fraction_result = B::from_bits(&mant_res_final.to_bits()[..52]);
+        let exponent = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
+            .expect("Exponent length should have grown");
+        let fraction = mant_res_final.truncate(52);
 
         Self {
             sign,
-            exponent: exp_res,
-            fraction: fraction_result,
+            exponent,
+            fraction,
         }
     }
 }

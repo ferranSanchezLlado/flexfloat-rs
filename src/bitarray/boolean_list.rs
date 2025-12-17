@@ -168,6 +168,14 @@ impl BitArray for BoolBitArray {
         self.bits.push(value);
         self
     }
+
+    fn truncate(mut self, n_bits: usize) -> Self
+    where
+        Self: Sized,
+    {
+        self.bits.truncate(n_bits);
+        self
+    }
 }
 
 impl Index<Range<usize>> for BoolBitArray {

@@ -553,6 +553,15 @@ pub trait BitArray {
         bits.extend(repeat_n(value, count));
         Self::from_bits(&bits)
     }
+
+    fn truncate(self, n_bits: usize) -> Self
+    where
+        Self: Sized,
+    {
+        let bits = self.to_bits();
+        let truncated_bits = &bits[..usize::min(n_bits, bits.len())];
+        Self::from_bits(truncated_bits)
+    }
 }
 
 macro_rules! impl_index {
