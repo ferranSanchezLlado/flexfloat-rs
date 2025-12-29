@@ -40,7 +40,7 @@
 use std::cmp::{max, min};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 
 use crate::bitarray::BitArray;
 use crate::flexfloat::FlexFloat;
@@ -205,20 +205,20 @@ impl<B: BitArray> Add for FlexFloat<B> {
             exp_diff >= BigInt::ZERO,
             "Self exponent should be larger/equal"
         );
-        let mant_rhs = mant_rhs.shift(exp_diff.try_into().expect("Exponent difference too large"));
+        let mant_rhs =
+            mant_rhs.shift_fixed(exp_diff.try_into().expect("Exponent difference too large"));
 
         assert_eq!(mant_self.len(), 53, "Mantissa length should be 53 bits");
         assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
 
         // 5. Add mantissas.
-        let mut mantissa_result_uint = mant_self.to_biguint() + mant_rhs.to_biguint();
+        let mut mantissa_result = mant_self + mant_rhs;
         // 6. Normalize mantissa and adjust exponent if necessary.
-        if mantissa_result_uint.bits() > 53 {
+        if mantissa_result.len() > 53 {
             // Need to normalize
             exp_self += 1_u8;
-            mantissa_result_uint >>= 1;
+            mantissa_result = mantissa_result.shift_fixed(1);
         }
-        let mantissa_result = B::from_biguint_fixed(&mantissa_result_uint, 53);
 
         // 7. Grow exponent if necessary. (no limit on size)
         let n_bits_exp = Self::grow_exponent_bits(&exp_self, self.exponent.len());
@@ -268,29 +268,30 @@ impl<B: BitArray> Sub for FlexFloat<B> {
         let mant_rhs = rhs.fraction.append_bool_in_place(true);
 
         // 4. Shift smaller mantissa if necessary.
-        let exp_diff = exp_self.clone() - exp_rhs.clone();
+        let exp_diff = exp_self.clone() - exp_rhs;
         assert!(
             exp_diff >= BigInt::ZERO,
             "Self exponent should be larger/equal"
         );
-        let mant_rhs = mant_rhs.shift(exp_diff.try_into().expect("Exponent difference too large"));
+        let mant_rhs =
+            mant_rhs.shift_fixed(exp_diff.try_into().expect("Exponent difference too large"));
 
         assert_eq!(mant_self.len(), 53, "Mantissa length should be 53 bits");
         assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
 
         // 5. Subtract mantissas.
-        let mut mantissa_result_uint = mant_self.to_biguint() - mant_rhs.to_biguint();
+        let mut mantissa_result = mant_self - mant_rhs;
 
         // Find leading zeros for normalization
-        let msb_pos = mantissa_result_uint.bits();
-        let shift = msb_pos as isize - 53;
-        if shift < 0 {
-            mantissa_result_uint <<= shift.unsigned_abs();
-        } else if shift > 0 {
-            mantissa_result_uint >>= shift as usize;
+        let msb_pos = mantissa_result.iter_bits().rposition(|b| b);
+        match msb_pos {
+            Some(msb_pos) => {
+                let shift = msb_pos as isize - 52;
+                mantissa_result = mantissa_result.shift_fixed(shift);
+                exp_self += BigInt::from(shift);
+            }
+            None => return Self::new_zero_with_sign(self.sign),
         }
-        exp_self += BigInt::from(shift);
-        let mantissa_result = B::from_biguint_fixed(&mantissa_result_uint, 53);
 
         // 7. Grow exponent if necessary. (no limit on size)
         let n_bits_exp = Self::grow_exponent_bits(&exp_self, self.exponent.len());
@@ -331,13 +332,10 @@ impl<B: BitArray> Mul for FlexFloat<B> {
         let exp_rhs = rhs.exponent.to_bigint() + 1_u8;
         let mut exp_res = exp_self + exp_rhs;
 
-        let mant_self_int = self.fraction.append_bool_in_place(true).to_biguint();
-        let mant_rhs_int = rhs.fraction.append_bool_in_place(true).to_biguint();
+        let mant_self = self.fraction.append_bool_in_place(true);
+        let mant_rhs = rhs.fraction.append_bool_in_place(true);
 
-        let mant_res_int = mant_self_int * mant_rhs_int;
-
-        // Grow mantissa if necessary (it can be up to 106 bits)
-        let mut mant_res = B::from_biguint_fixed(&mant_res_int, 106);
+        let mut mant_res = mant_self * mant_rhs;
 
         let msb_pos = mant_res.iter_bits().rposition(|b| b).unwrap();
 
@@ -400,23 +398,20 @@ impl<B: BitArray> Div for FlexFloat<B> {
         let exp_rhs = rhs.exponent.to_bigint() + 1_u8;
         let mut exp_res = exp_self - exp_rhs;
 
-        let mant_self_int = self.fraction.append_bool_in_place(true).to_biguint();
-        let mant_rhs_int = rhs.fraction.append_bool_in_place(true).to_biguint();
+        let mant_self = self.fraction.append_bool_in_place(true);
+        let mant_rhs = rhs.fraction.append_bool_in_place(true);
         // We shift by 52 to produce 53 bits (1 implicit + 52 fraction) of precision.
-        let mant_res_int: BigUint = (mant_self_int << 52) / mant_rhs_int;
+        let mut mant_res = mant_self.shift_grow(52) / mant_rhs;
 
         // If result is zero, return signed zero.
-        if mant_res_int == BigUint::ZERO {
+        if mant_res.iter_bits().all(|b| !b) {
             return Self::new_zero_with_sign(sign);
         }
-
-        // Convert to a BitArray with enough capacity (up to 106 bits).
-        let mut mant_res = B::from_biguint_fixed(&mant_res_int, 106);
 
         // Find MSB position and normalize so the MSB sits at index 52.
         let msb_pos = mant_res.iter_bits().rposition(|b| b).unwrap();
         let shift = msb_pos as isize - 52;
-        mant_res = mant_res.shift(shift);
+        mant_res = mant_res.shift_fixed(shift);
         exp_res += BigInt::from(shift);
 
         let lsb_pos = max(msb_pos.saturating_sub(52), 0);

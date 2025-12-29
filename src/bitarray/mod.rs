@@ -41,7 +41,7 @@ use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
 use std::hint::unreachable_unchecked;
 use std::iter::repeat_n;
-use std::ops::{Index, IndexMut, Range};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Range, Sub};
 
 pub mod boolean_list;
 
@@ -65,7 +65,9 @@ pub type DefaultBitArray = BoolBitArray;
 /// Implementors must provide efficient storage and access for bit sequences,
 /// with particular attention to memory usage and performance for common operations
 /// like indexing and range extraction.
-pub trait BitArray {
+pub trait BitArray:
+    Sized + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self>
+{
     // === Construction Methods ===
 
     /// Creates a new BitArray from a byte array with specified bit length.
@@ -192,7 +194,7 @@ pub trait BitArray {
 
     /// Creates a BitArray from a signed BigInt with specified bit width.
     ///
-    /// Uses two's complement representation for negative numbers.
+    /// Uses bias offset (half the range) for conversion.
     /// Returns None if the value cannot fit in the specified bit width.
     ///
     /// # Arguments
@@ -354,7 +356,7 @@ pub trait BitArray {
         BigUint::from_bytes_le(&self.to_bytes())
     }
 
-    /// Converts the BitArray to a signed BigInt using two's complement.
+    /// Converts the BitArray to a signed BigInt using offset bias (half the range).
     ///
     /// # Returns
     ///
@@ -476,7 +478,7 @@ pub trait BitArray {
     /// Shifts the BitArray by the specified number of positions with fill value.
     ///
     /// Positive shift moves bits to the right (towards higher indices),
-    /// negative shift moves bits to the left (towards lower indices).
+    /// Negative shift moves bits to the left (towards lower indices).
     /// Vacated positions are filled with the specified fill value.
     ///
     /// # Arguments
@@ -494,10 +496,10 @@ pub trait BitArray {
     /// use flexfloat::bitarray::{BitArray, BoolBitArray};
     ///
     /// let bits = BoolBitArray::from_bits(&[true, false, true]);
-    /// let shifted = bits.shift_with_fill(1, false);
+    /// let shifted = bits.shift_fixed_with_fill(1, false);
     /// assert_eq!(shifted.to_bits(), vec![false, true, false]);
     /// ```
-    fn shift_with_fill(self, shift: isize, fill: bool) -> Self
+    fn shift_fixed_with_fill(self, shift: isize, fill: bool) -> Self
     where
         Self: Sized,
     {
@@ -535,11 +537,11 @@ pub trait BitArray {
     /// # Returns
     ///
     /// New BitArray with bits shifted and zero-filled
-    fn shift(self, shift: isize) -> Self
+    fn shift_fixed(self, shift: isize) -> Self
     where
         Self: Sized,
     {
-        self.shift_with_fill(shift, false)
+        self.shift_fixed_with_fill(shift, false)
     }
 
     fn append_repeated(self, value: bool, count: usize) -> Self
@@ -561,6 +563,11 @@ pub trait BitArray {
         let bits = self.to_bits();
         let truncated_bits = &bits[..usize::min(n_bits, bits.len())];
         Self::from_bits(truncated_bits)
+    }
+
+    fn shift_grow_with_fill(self, shift: isize, fill: bool) -> Self;
+    fn shift_grow(self, shift: isize) -> Self {
+        self.shift_grow_with_fill(shift, false)
     }
 }
 

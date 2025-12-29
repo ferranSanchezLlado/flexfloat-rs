@@ -10,14 +10,14 @@ cargo fmt --all -- --check
 echo "[pre-commit] Running cargo clippy"
 cargo clippy --all-targets --all-features -- -D warnings
 
-echo "[pre-commit] Running cargo test (default features)"
-cargo test --verbose
-
 echo "[pre-commit] Running cargo build (warnings as errors)"
 RUSTFLAGS="-D warnings" cargo build --verbose
 
 echo "[pre-commit] Running cargo doc --all-features --no-deps (warnings as errors)"
 RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+
+echo "[pre-commit] Running cargo test (default features)"
+cargo test --verbose
 
 echo "[pre-commit] All checks passed."
 
