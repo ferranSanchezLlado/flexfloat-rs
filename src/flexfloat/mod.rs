@@ -50,7 +50,7 @@
 //!          x.sign(), x.exponent().len(), x.fraction().len());
 //! ```
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use crate::bitarray::{BitArray, DefaultBitArray};
 
@@ -449,7 +449,7 @@ impl FlexFloat<DefaultBitArray> {
     }
 }
 
-impl Debug for FlexFloat<DefaultBitArray> {
+impl<B: BitArray> Debug for FlexFloat<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         {
             f.debug_struct("FlexFloat")
@@ -458,13 +458,104 @@ impl Debug for FlexFloat<DefaultBitArray> {
                 .field("fraction", &self.fraction.to_biguint())
                 .finish()
         }
-        // #[cfg(not(feature = "bigint"))]
-        // {
-        //     f.debug_struct("FlexFloat")
-        //         .field("sign", &self.sign)
-        //         .field("exponent", &self.exponent.to_bits_string())
-        //         .field("fraction", &self.fraction.to_bits_string())
-        //         .finish()
-        // }
+    }
+}
+
+impl<B: BitArray> Display for FlexFloat<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_nan() {
+            return write!(f, "NaN");
+        }
+        if self.is_infinity() {
+            return write!(f, "{}inf", if self.sign { "-" } else { "" });
+        }
+        if self.is_zero() {
+            return write!(f, "{}0", if self.sign { "-" } else { "" });
+        }
+
+        use num_bigint::{BigInt, BigUint};
+        use num_traits::{One, ToPrimitive, Zero};
+
+        let sig = (BigUint::one() << self.fraction.len()) + self.fraction.to_biguint();
+
+        let e_shift = self.exponent.to_bigint() + 1_usize - self.fraction.len();
+
+        let (num, den) = if e_shift >= BigInt::zero() {
+            (sig << e_shift.to_usize().unwrap_or(0), BigUint::one())
+        } else {
+            (sig, BigUint::one() << (-e_shift).to_usize().unwrap_or(0))
+        };
+
+        let scaled = (&num * BigUint::from(10u64).pow(17)) / &den;
+        let scaled_str = format!("{}", scaled);
+        let dec_pos = (scaled_str.len() as isize) - 17;
+
+        let result = if dec_pos <= 0 {
+            let mut s = String::from("0.");
+            for _ in 1..(1 - dec_pos) as usize {
+                s.push('0');
+            }
+            s.push_str(&scaled_str);
+            s
+        } else {
+            let pos = dec_pos as usize;
+            if pos >= scaled_str.len() {
+                scaled_str.clone()
+            } else {
+                let (int, frac) = scaled_str.split_at(pos);
+                match frac.trim_end_matches('0') {
+                    "" => int.to_string(),
+                    frac_trim => format!("{}.{}", int, frac_trim),
+                }
+            }
+        };
+
+        write!(f, "{}{}", if self.sign { "-" } else { "" }, result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::Rng;
+    use rstest::rstest;
+
+    use crate::tests::n_experiments;
+
+    use super::*;
+    use crate::tests::*;
+
+    #[rstest]
+    fn test_to_string(mut rng: impl Rng, n_experiments: usize) {
+        let special_values = [
+            (FlexFloat::pos_infinity(), "inf"),
+            (FlexFloat::neg_infinity(), "-inf"),
+            (FlexFloat::nan(), "NaN"),
+            (FlexFloat::zero(), "0"),
+            (FlexFloat::zero_with_sign(true), "-0"),
+        ];
+
+        for (ff, expected_str) in special_values {
+            assert_eq!(ff.to_string(), expected_str);
+        }
+
+        for _ in 0..n_experiments {
+            let value: f64 = rng.random();
+            let ff = FlexFloat::from(value);
+
+            if ff.is_special_exponent() {
+                continue; // Skip special values (Already tested above)
+            }
+
+            let ff_str = ff.to_string();
+            let value_str = value.to_string();
+
+            let min_len = std::cmp::min(ff_str.len(), value_str.len());
+            let min_len = std::cmp::min(min_len, 10);
+            assert_eq!(
+                &ff_str[..min_len],
+                &value_str[..min_len],
+                "Failed for value: {value}, FlexFloat: {value_str}",
+            );
+        }
     }
 }
