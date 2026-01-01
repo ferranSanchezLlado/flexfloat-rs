@@ -57,6 +57,7 @@ use crate::bitarray::{BitArray, DefaultBitArray};
 pub mod arithmetic;
 pub mod cmp;
 pub mod converter;
+pub mod math;
 
 /// A flexible precision floating-point number with growable exponents.
 ///

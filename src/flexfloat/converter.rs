@@ -41,6 +41,9 @@
 //! assert!(inf_flex.is_infinity());
 //! ```
 
+use num_bigint::{BigInt, BigUint, Sign};
+use num_traits::{One, Signed, Zero};
+
 use crate::bitarray::{BitArray, DefaultBitArray};
 use crate::flexfloat::FlexFloat;
 
@@ -125,51 +128,104 @@ impl<B: BitArray> FlexFloat<B> {
                 .expect("Underlaying BitArray cannot convert to f64"),
         )
     }
+
+    pub fn from_int(value: BigInt) -> Self {
+        if value.is_zero() {
+            return Self::new_zero();
+        }
+
+        let sign = value.is_negative();
+        let abs_value = value.abs().to_biguint().unwrap();
+
+        // Find the position of the most significant bit
+        let bit_length = abs_value.bits() as i64 - 1;
+
+        // The format represents: value = (1 + fraction/2^fraction_bits) * 2^exponent
+        // where exponent is stored as (actual_exponent - 1)
+        let stored_exponent_value = BigInt::from(bit_length - 1);
+        let n_bits_exp: usize = Self::grow_exponent_bits(&stored_exponent_value, 11);
+        let exponent =
+            B::from_bigint(&stored_exponent_value, n_bits_exp).expect("Exponent should fit");
+
+        // Extract the fractional part (all bits except the MSB)
+        let msb_mask = BigUint::one() << bit_length;
+        let fraction_bits = &abs_value & (msb_mask - 1u8);
+
+        let fraction = B::from_biguint_fixed(&fraction_bits, 52);
+        let fraction_len = bit_length as isize - 1;
+        let fraction = fraction.shift_fixed(fraction_len - 51);
+
+        debug_assert!(exponent.len() >= 11);
+        debug_assert!(fraction.len() == 52);
+
+        Self {
+            sign,
+            exponent,
+            fraction,
+        }
+    }
+
+    pub fn to_int(&self) -> Option<BigInt> {
+        if self.is_nan() || self.is_infinity() {
+            return None;
+        }
+
+        if self.is_zero() {
+            return Some(BigInt::ZERO);
+        }
+
+        // IEEE 754 uses a bias. For our flexible exponent size, the bias is 2^(exp_bits-1) - 1.
+        // But the implementation seems to use exponent + 1 as the actual exponent value
+        let exponent = self.exponent.to_bigint() + 1;
+
+        // Fast path for exponent < 0
+        if exponent < BigInt::ZERO {
+            return Some(BigInt::ZERO);
+        }
+
+        // Get the mantissa (1.fraction)
+        let fraction = self.fraction.to_biguint();
+        let fraction_bits = self.fraction.len();
+
+        // Add the implicit leading 1
+        let fraction = fraction + (BigUint::one() << fraction_bits);
+
+        // Calculate the integer value
+        // The value is fraction * 2^(exponent - fraction_bits)
+        let shift_amount = isize::try_from(BigInt::from(fraction_bits) - exponent).unwrap();
+
+        let int_value = if shift_amount > 0 {
+            fraction >> shift_amount
+        } else {
+            fraction << -shift_amount
+        };
+
+        let sign = if self.sign { Sign::Minus } else { Sign::Plus };
+        Some(BigInt::from_biguint(sign, int_value))
+    }
 }
 
-/// Automatic conversion from f64 to FlexFloat using the default bit array.
-///
-/// This implementation provides seamless conversion from standard IEEE 754
-/// double-precision floats to FlexFloat using the default BitArray implementation.
-///
-/// # Examples
-///
-/// ```rust
-/// use flexfloat::prelude::*;
-///
-/// let flex: FlexFloat<_> = 3.14159.into();
-/// // or equivalently:
-/// let flex = FlexFloat::from(3.14159);
-/// ```
 impl From<f64> for FlexFloat<DefaultBitArray> {
     fn from(value: f64) -> Self {
         Self::from_f64(value)
     }
 }
 
-/// Automatic conversion from FlexFloat to f64 using the default bit array.
-///
-/// This implementation provides seamless conversion from FlexFloat back to
-/// standard IEEE 754 double-precision floats. Panics if the FlexFloat cannot
-/// be represented as an f64 (e.g., insufficient exponent or fraction bits).
-///
-/// # Panics
-///
-/// Panics if `to_f64()` returns None, indicating the FlexFloat components
-/// are incompatible with IEEE 754 format.
-///
-/// # Examples
-///
-/// ```rust
-/// use flexfloat::FlexFloat;
-///
-/// let flex = FlexFloat::from(2.71828);
-/// let f64_val: f64 = flex.into();
-/// assert_eq!(f64_val, 2.71828);
-/// ```
 impl From<FlexFloat<DefaultBitArray>> for f64 {
     fn from(value: FlexFloat<DefaultBitArray>) -> Self {
         value.to_f64().unwrap()
+    }
+}
+
+impl From<BigInt> for FlexFloat<DefaultBitArray> {
+    fn from(value: BigInt) -> Self {
+        Self::from_int(value)
+    }
+}
+
+impl From<FlexFloat<DefaultBitArray>> for BigInt {
+    fn from(value: FlexFloat<DefaultBitArray>) -> Self {
+        value.to_int().unwrap()
     }
 }
 
@@ -177,10 +233,9 @@ impl From<FlexFloat<DefaultBitArray>> for f64 {
 mod tests {
     use std::vec;
 
+    use num_traits::ToPrimitive;
     use rand::Rng;
     use rstest::rstest;
-
-    use crate::tests::n_experiments;
 
     use super::*;
     use crate::tests::*;
@@ -257,5 +312,70 @@ mod tests {
     fn test_conversion(mut rng: impl Rng, n_experiments: usize) {
         test_from_f64(&mut rng, n_experiments);
         test_to_f64(&mut rng, n_experiments);
+    }
+
+    #[rstest]
+    fn test_to_int(mut rng: impl Rng, n_experiments: usize) {
+        let special_values = [
+            FlexFloat::nan(),
+            FlexFloat::pos_infinity(),
+            FlexFloat::neg_infinity(),
+        ];
+
+        for ff in special_values {
+            let value = ff.to_int();
+            assert!(
+                value.is_none(),
+                "Conversion of {:?} to int should return None",
+                ff
+            );
+        }
+
+        let values = [0.1, 0.5, 0.9, 1.0, -0.1, -0.5, 123.45, 1234.0];
+        for v in values {
+            let ff = FlexFloat::from(v);
+            let converted_value = ff.to_int().unwrap();
+
+            let expected_value = v as i64;
+            assert_eq!(
+                BigInt::from(expected_value),
+                converted_value,
+                "to_int({})",
+                v
+            );
+        }
+
+        for _ in 0..n_experiments {
+            let value: f64 = rng.random();
+            let ff: FlexFloat<crate::BoolBitArray> = FlexFloat::from(value);
+            if ff.is_nan() || ff.is_infinity() {
+                continue;
+            }
+            let converted_value = ff.to_int().unwrap();
+            let expected_value = BigInt::from(value as i64);
+
+            assert_eq!(converted_value, expected_value);
+        }
+    }
+
+    #[rstest]
+    fn test_from_int(mut rng: impl Rng, n_experiments: usize) {
+        let int_values = [0, 1, -1, 1234, -9876, 10213213];
+
+        for &int_val in &int_values {
+            let value = f64::from(int_val).to_isize().unwrap();
+            let ff = FlexFloat::from(BigInt::from(int_val));
+            let converted_value = ff.to_int().unwrap().to_isize().unwrap();
+            assert_eq!(converted_value, value, "from_int({})", int_val);
+        }
+
+        for _ in 0..n_experiments {
+            let int_val: i32 = rng.random();
+
+            let value = f64::from(int_val).to_i64().unwrap();
+            let ff = FlexFloat::from(BigInt::from(int_val));
+            let converted_value = ff.to_int().unwrap().to_i64().unwrap();
+            assert_eq!(converted_value, value, "from_int({})", int_val);
+        }
     }
 }
