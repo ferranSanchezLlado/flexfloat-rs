@@ -72,7 +72,7 @@ pub mod converter;
 ///
 /// - `sign`: Boolean indicating number sign (false = positive, true = negative)
 /// - `exponent`: Variable-width signed exponent field
-/// - `fraction`: Fixed-width mantissa/fraction field (typically 52 bits)
+/// - `fraction`: Fixed-width mantissa/fraction field (52 bits)
 ///
 /// # Memory Efficiency
 ///
@@ -105,7 +105,7 @@ impl<B: BitArray> FlexFloat<B> {
     /// let frac = DefaultBitArray::zeros(52);
     /// let num = FlexFloat::new(false, exp, frac);
     /// ```
-    pub fn new(sign: bool, exponent: B, fraction: B) -> Self {
+    pub const fn new(sign: bool, exponent: B, fraction: B) -> Self {
         Self {
             sign,
             exponent,
@@ -449,7 +449,7 @@ impl FlexFloat<DefaultBitArray> {
     }
 }
 
-impl Debug for FlexFloat<DefaultBitArray> {
+impl<B: BitArray> Debug for FlexFloat<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         {
             f.debug_struct("FlexFloat")

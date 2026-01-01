@@ -73,7 +73,7 @@ impl BitArray for BoolBitArray {
         }
     }
 
-    // [7, 1], 9 -> [1, 1, 1, 0, 0, 0, 0, 0, 0, 1]
+    // [7, 1], 10 -> [1, 1, 1, 0, 0, 0, 0, 0, 1, 0]
     fn from_bytes(bytes: &[u8], n_bits: usize) -> Self
     where
         Self: Sized,
@@ -91,10 +91,6 @@ impl BitArray for BoolBitArray {
             bits.push(bit == 1);
         }
 
-        // Fill with zeros if n_bits is more than available bits in bytes
-        while bits.len() < n_bits {
-            bits.push(false);
-        }
         Self { bits }
     }
 
@@ -199,6 +195,11 @@ impl BitArray for BoolBitArray {
         for i in 0..shift_abs {
             self.bits[i] = fill;
         }
+        self
+    }
+
+    fn clear(mut self) -> Self {
+        self.bits.fill(false);
         self
     }
 }
@@ -407,9 +408,9 @@ mod tests {
 
     use num_bigint::{BigInt, BigUint};
     use num_traits::identities::Zero;
+    use rand::Rng;
     use rstest::rstest;
 
-    use super::super::tests::*;
     use super::*;
     use crate::tests::*;
 

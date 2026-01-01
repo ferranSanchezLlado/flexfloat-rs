@@ -569,6 +569,8 @@ pub trait BitArray:
     fn shift_grow(self, shift: isize) -> Self {
         self.shift_grow_with_fill(shift, false)
     }
+
+    fn clear(self) -> Self;
 }
 
 macro_rules! impl_index {
@@ -591,58 +593,3 @@ macro_rules! impl_index {
 }
 
 impl_index!(BoolBitArray);
-
-#[cfg(test)]
-mod tests {
-    use num_bigint::{BigInt, BigUint};
-    pub use rand::Rng;
-
-    pub fn random_bits(rng: &mut impl Rng, len: usize) -> Vec<bool> {
-        (0..len).map(|_| rng.random_bool(0.5)).collect()
-    }
-
-    pub fn random_bytes(rng: &mut impl Rng, len: usize) -> Vec<u8> {
-        (0..len).map(|_| rng.random()).collect()
-    }
-
-    pub fn random_bits_string(rng: &mut impl Rng, len: usize) -> String {
-        (0..len)
-            .map(|_| if rng.random_bool(0.5) { '1' } else { '0' })
-            .collect()
-    }
-
-    pub fn random_biguint(rng: &mut impl Rng, n_bits: usize) -> BigUint {
-        let n_bytes = n_bits.div_ceil(8);
-        let mut bytes = vec![0u8; n_bytes];
-        rng.fill(&mut bytes[..]);
-        let last_num_bits = n_bits % 8;
-        if last_num_bits > 0 {
-            bytes[n_bytes - 1] &= (1 << last_num_bits) - 1;
-        }
-        BigUint::from_bytes_le(&bytes)
-    }
-
-    pub fn random_bigint(rng: &mut impl Rng, n_bits: usize) -> BigInt {
-        let uint = random_biguint(rng, n_bits - 1);
-        if rng.random_bool(0.5) {
-            BigInt::from(uint)
-        } else {
-            -BigInt::from(uint)
-        }
-    }
-
-    pub fn string_to_bits(s: &str) -> Vec<bool> {
-        s.chars().map(|c| c == '1').collect()
-    }
-
-    pub fn string_to_bytes(s: &str) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        for bits in s.as_bytes().chunks(8) {
-            let string = std::str::from_utf8(bits).unwrap();
-            let mut byte = u8::from_str_radix(string, 2).unwrap();
-            byte = byte.reverse_bits() >> (8 - bits.len());
-            bytes.push(byte);
-        }
-        bytes
-    }
-}

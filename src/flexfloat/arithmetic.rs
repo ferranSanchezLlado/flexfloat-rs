@@ -140,8 +140,15 @@ impl<B: BitArray> FlexFloat<B> {
     /// // - 11 bits: range [-1024, 1023] (fits)
     /// // - 10 bits: range [-512, 511] (doesn't fit)
     /// ```
-    fn grow_exponent_bits(exp: &BigInt, current_len: usize) -> usize {
-        max(current_len, exp.bits() as usize + 1) // +1 for sign bit
+    pub(crate) fn grow_exponent_bits(exp: &BigInt, current_len: usize) -> usize {
+        let bits = exp.bits();
+
+        // 1 bit sign + 1 bit to avoid being confuesed with nan/inf
+        let extra_bits = match exp.trailing_zeros() {
+            Some(0) => 2,
+            _ => 1,
+        };
+        max(current_len, bits as usize + extra_bits)
     }
 }
 
@@ -221,10 +228,11 @@ impl<B: BitArray> Add for FlexFloat<B> {
         }
 
         // 7. Grow exponent if necessary. (no limit on size)
+        let exp_self = exp_self - 1_u8;
         let n_bits_exp = Self::grow_exponent_bits(&exp_self, self.exponent.len());
 
-        let exponent = B::from_bigint(&(exp_self - 1_u8), n_bits_exp)
-            .expect("Exponent length should have grown");
+        let exponent =
+            B::from_bigint(&exp_self, n_bits_exp).expect("Exponent length should have grown");
         let fraction = mantissa_result.truncate(52);
         FlexFloat {
             sign: self.sign,
@@ -294,9 +302,11 @@ impl<B: BitArray> Sub for FlexFloat<B> {
         }
 
         // 7. Grow exponent if necessary. (no limit on size)
+        let exp_self = exp_self - 1_u8;
         let n_bits_exp = Self::grow_exponent_bits(&exp_self, self.exponent.len());
-        let exponent = B::from_bigint(&(exp_self - 1_u8), n_bits_exp)
-            .expect("Exponent length should have grown");
+
+        let exponent =
+            B::from_bigint(&exp_self, n_bits_exp).expect("Exponent length should have grown");
         let fraction = mantissa_result.truncate(52);
         FlexFloat {
             sign: self.sign,
@@ -347,11 +357,12 @@ impl<B: BitArray> Mul for FlexFloat<B> {
         mant_res = mant_res.get_range(lsb_pos..msb_pos_end).unwrap();
 
         // 7. Grow exponent if necessary (no limit on size)
+        let exp_res = exp_res - 1_u8;
         let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
         let exp_result_length = Self::grow_exponent_bits(&exp_res, max_exp_len);
 
-        let exponent = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
-            .expect("Exponent length should have grown");
+        let exponent =
+            B::from_bigint(&exp_res, exp_result_length).expect("Exponent length should have grown");
         let fraction = mant_res.truncate(52);
 
         Self {
@@ -419,11 +430,12 @@ impl<B: BitArray> Div for FlexFloat<B> {
         let mant_res_final = mant_res.get_range(lsb_pos..msb_pos_end).unwrap();
 
         // 7. Grow exponent if necessary (no limit on size)
+        let exp_res = exp_res - 1_u8;
         let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
         let exp_result_length = Self::grow_exponent_bits(&exp_res, max_exp_len);
 
-        let exponent = B::from_bigint(&(exp_res - 1_u8), exp_result_length)
-            .expect("Exponent length should have grown");
+        let exponent =
+            B::from_bigint(&exp_res, exp_result_length).expect("Exponent length should have grown");
         let fraction = mant_res_final.truncate(52);
 
         Self {
@@ -441,20 +453,6 @@ mod tests {
 
     use super::*;
     use crate::tests::*;
-
-    const EPSILON: f64 = 1e-10;
-
-    #[track_caller]
-    fn assert_almost_eq(a: f64, b: f64, message: &str) {
-        assert!(
-            (a - b).abs() <= EPSILON,
-            "{}: {} and {} differ more than {}",
-            message,
-            a,
-            b,
-            EPSILON
-        );
-    }
 
     #[rstest]
     fn test_add(mut rng: impl Rng, n_experiments: usize) {
