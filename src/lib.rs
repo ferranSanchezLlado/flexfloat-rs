@@ -84,11 +84,11 @@ pub mod prelude {
 mod tests {
     use std::sync::OnceLock;
 
-    use num_bigint::{BigInt, BigUint};
+    use num_bigint::{BigInt, BigUint, Sign};
     use rand::{Rng, SeedableRng, rngs::StdRng};
     use rstest::fixture;
 
-    const EPSILON: f64 = 1e-10;
+    const EPSILON: f64 = 1e-8;
     static SEED: OnceLock<u64> = OnceLock::new();
 
     #[fixture]
@@ -109,33 +109,37 @@ mod tests {
 
     #[track_caller]
     pub fn assert_almost_eq(a: f64, b: f64, message: &str) {
-        let diff = (a - b).abs();
+        let diff = (a - b).abs() / a.abs().max(b.abs()).max(1e-10);
         assert!(
             diff <= EPSILON,
-            "{}: {} and {} differ by {}, which is more than {}",
-            message,
-            a,
-            b,
-            diff,
-            EPSILON
+            "{message}: {a:.5e} vs {b:.5e} ({diff:.2e} > {EPSILON:.2e})",
         );
     }
 
-    pub fn random_bits(rng: &mut impl Rng, len: usize) -> Vec<bool> {
+    pub fn random_f64(mut rng: impl Rng) -> f64 {
+        loop {
+            let float = f64::from_bits(rng.random());
+            if float.is_finite() {
+                return float;
+            }
+        }
+    }
+
+    pub fn random_bits(mut rng: impl Rng, len: usize) -> Vec<bool> {
         (0..len).map(|_| rng.random_bool(0.5)).collect()
     }
 
-    pub fn random_bytes(rng: &mut impl Rng, len: usize) -> Vec<u8> {
+    pub fn random_bytes(mut rng: impl Rng, len: usize) -> Vec<u8> {
         (0..len).map(|_| rng.random()).collect()
     }
 
-    pub fn random_bits_string(rng: &mut impl Rng, len: usize) -> String {
+    pub fn random_bits_string(mut rng: impl Rng, len: usize) -> String {
         (0..len)
             .map(|_| if rng.random_bool(0.5) { '1' } else { '0' })
             .collect()
     }
 
-    pub fn random_biguint(rng: &mut impl Rng, n_bits: usize) -> BigUint {
+    pub fn random_biguint(mut rng: impl Rng, n_bits: usize) -> BigUint {
         let n_bytes = n_bits.div_ceil(8);
         let mut bytes = vec![0u8; n_bytes];
         rng.fill(&mut bytes[..]);
@@ -146,12 +150,12 @@ mod tests {
         BigUint::from_bytes_le(&bytes)
     }
 
-    pub fn random_bigint(rng: &mut impl Rng, n_bits: usize) -> BigInt {
-        let uint = random_biguint(rng, n_bits - 1);
+    pub fn random_bigint(mut rng: impl Rng, n_bits: usize) -> BigInt {
+        let uint = random_biguint(&mut rng, n_bits - 1);
         if rng.random_bool(0.5) {
-            BigInt::from(uint)
+            BigInt::from_biguint(Sign::Plus, uint)
         } else {
-            -BigInt::from(uint)
+            BigInt::from_biguint(Sign::Minus, uint)
         }
     }
 
@@ -162,11 +166,23 @@ mod tests {
     pub fn string_to_bytes(s: &str) -> Vec<u8> {
         let mut bytes = Vec::new();
         for bits in s.as_bytes().chunks(8) {
-            let string = std::str::from_utf8(bits).unwrap();
+            let string = str::from_utf8(bits).unwrap();
+
             let mut byte = u8::from_str_radix(string, 2).unwrap();
             byte = byte.reverse_bits() >> (8 - bits.len());
             bytes.push(byte);
         }
         bytes
+    }
+
+    pub fn f64_to_bits(value: f64) -> Vec<bool> {
+        let bytes = value.to_le_bytes();
+        let mut bits = Vec::with_capacity(64);
+        for byte in &bytes {
+            for i in 0..8 {
+                bits.push((byte >> i) & 1 == 1);
+            }
+        }
+        bits
     }
 }

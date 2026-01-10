@@ -32,12 +32,19 @@ where
         let exponent = self.exponent.to_bigint().cmp(&other.exponent.to_bigint());
         let fraction = self.fraction.to_biguint().cmp(&other.fraction.to_biguint());
 
+        let sign_ordering = if self.sign {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
         match (sign, exponent, fraction) {
             (Ordering::Equal, Ordering::Equal, Ordering::Equal) => Some(Ordering::Equal),
             (Ordering::Less, _, _) => Some(Ordering::Greater),
-            (Ordering::Equal, Ordering::Greater, _) => Some(Ordering::Greater),
-            (Ordering::Equal, Ordering::Equal, Ordering::Greater) => Some(Ordering::Greater),
-            _ => Some(Ordering::Less),
+            (Ordering::Greater, _, _) => Some(Ordering::Less),
+
+            (Ordering::Equal, Ordering::Greater, _) => Some(sign_ordering),
+            (Ordering::Equal, Ordering::Equal, Ordering::Greater) => Some(sign_ordering),
+            _ => Some(sign_ordering.reverse()),
         }
     }
 }
@@ -61,8 +68,8 @@ mod tests {
         assert!(nan != nan);
 
         for _ in 0..n_experiments {
-            let a: f64 = rng.random();
-            let b: f64 = rng.random();
+            let a = random_f64(&mut rng);
+            let b = random_f64(&mut rng);
             let expected1 = a == b;
             let expected2 = a == a;
 
@@ -88,8 +95,8 @@ mod tests {
         assert!((nan > nan) == false);
 
         for _ in 0..n_experiments {
-            let a: f64 = rng.random();
-            let b: f64 = rng.random();
+            let a = random_f64(&mut rng);
+            let b = random_f64(&mut rng);
             let expected1 = a < b;
             let expected2 = a >= a;
 

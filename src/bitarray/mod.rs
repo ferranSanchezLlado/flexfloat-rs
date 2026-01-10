@@ -39,6 +39,7 @@
 
 use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
+use std::fmt::Debug;
 use std::hint::unreachable_unchecked;
 use std::iter::repeat_n;
 use std::ops::{Add, Div, Index, IndexMut, Mul, Range, Sub};
@@ -66,7 +67,13 @@ pub type DefaultBitArray = BoolBitArray;
 /// with particular attention to memory usage and performance for common operations
 /// like indexing and range extraction.
 pub trait BitArray:
-    Sized + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self>
+    Sized
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Debug
+    + Clone
 {
     // === Construction Methods ===
 
@@ -85,10 +92,10 @@ pub trait BitArray:
     /// ```rust
     /// use flexfloat::bitarray::{BitArray, BoolBitArray};
     ///
-    /// // 0xAB = 10101011 in binary -> [1,1,0,1,0,1,0,1] in LE bit order
-    /// let bits = BoolBitArray::from_bytes(&[0xAB], 8);
-    /// assert_eq!(bits[0], true);  // LSB
-    /// assert_eq!(bits[7], true);  // MSB
+    /// // 0x7A = 1111010 in binary -> [0,1,0,1,1,1,1,0] in LE bit order
+    /// let bits = BoolBitArray::from_bytes(&[0x7A], 8);
+    /// assert_eq!(bits[1], true);  // LSB
+    /// assert_eq!(bits[6], true);  // MSB
     /// ```
     fn from_bytes(bytes: &[u8], n_bits: usize) -> Self
     where
@@ -341,6 +348,7 @@ pub trait BitArray:
     /// ```
     fn to_bits_string(&self) -> String {
         self.iter_bits()
+            .rev()
             .map(|b| if b { '1' } else { '0' })
             .collect()
     }

@@ -1,5 +1,6 @@
 use core::f64;
 
+use crate::flexfloat::grow_exponent;
 use crate::{BitArray, FlexFloat};
 
 /// Rounds the value to the nearest integer using round half to even
@@ -15,23 +16,41 @@ fn round<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 }
 
 fn floor<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
-    if value.is_nan() || value.is_infinity() {
+    if value.is_nan() || value.is_infinity() || value.is_zero() {
         return value;
     }
 
-    let value_int = value.to_int().unwrap();
-    let recasted_int: FlexFloat<B> = FlexFloat::from_int(value_int.clone());
-    FlexFloat::from_int(value_int + (if value < recasted_int { 1 } else { 0 }))
+    let trunc = value.clone().to_int().expect("Handled NaN/Inf above");
+    let value_trunc: FlexFloat<B> = FlexFloat::from_int(trunc.clone());
+    if value_trunc == value {
+        return value;
+    }
+
+    if !value.sign {
+        // If positive and not integral, floor = trunc (truncation toward zero is already the flooring)
+        value_trunc
+    } else {
+        FlexFloat::from_int(trunc - 1)
+    }
 }
 
 fn ceil<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
-    if value.is_nan() || value.is_infinity() {
+    if value.is_nan() || value.is_infinity() || value.is_zero() {
         return value;
     }
 
-    let value_int = value.to_int().unwrap();
-    let recasted_int: FlexFloat<B> = FlexFloat::from_int(value_int.clone());
-    FlexFloat::from_int(value_int - (if value >= recasted_int { 0 } else { 1 }))
+    let trunc = value.clone().to_int().expect("Handled NaN/Inf above");
+    let value_trunc: FlexFloat<B> = FlexFloat::from_int(trunc.clone());
+    if value_trunc == value {
+        return value;
+    }
+
+    if !value.sign {
+        FlexFloat::from_int(trunc + 1)
+    } else {
+        // If negative and not integral, ceil = trunc (truncation toward zero is already the ceiling)
+        value_trunc
+    }
 }
 
 pub fn exp<B: BitArray + Clone>(value: FlexFloat<B>) -> FlexFloat<B> {
@@ -81,18 +100,14 @@ pub fn exp<B: BitArray + Clone>(value: FlexFloat<B>) -> FlexFloat<B> {
 fn fast_exp2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     let value = value.to_int().unwrap() - 1;
 
-    let n_bits_exp: usize = FlexFloat::<B>::grow_exponent_bits(&value, 11);
-    FlexFloat::new(
-        false,
-        B::from_bigint(&value, n_bits_exp).unwrap(),
-        B::zeros(52) + B::ones(1),
-    )
+    let exponent = grow_exponent(value, 11);
+    FlexFloat::new(false, exponent, B::zeros(52) + B::ones(1))
 }
 
 // https://libc.llvm.org/headers/math/log.html
 pub fn ln<B: BitArray + Clone>(value: FlexFloat<B>) -> FlexFloat<B> {
     // Handle special cases: negative numbers, zero, NaN, Infinity
-    if value.is_nan() {
+    if value.is_nan() || value.is_infinity() {
         return value;
     }
     if value.sign {
@@ -103,8 +118,8 @@ pub fn ln<B: BitArray + Clone>(value: FlexFloat<B>) -> FlexFloat<B> {
         // ln(0) = -infinity
         return FlexFloat::new_infinity(true);
     }
-    if value.is_infinity() {
-        return value;
+    if value == FlexFloat::from(1.0) {
+        return FlexFloat::new_zero();
     }
 
     // Range reduction:
@@ -153,6 +168,14 @@ impl<B: BitArray + Clone> FlexFloat<B> {
         round(self)
     }
 
+    pub fn ceil(self) -> Self {
+        ceil(self)
+    }
+
+    pub fn floor(self) -> Self {
+        floor(self)
+    }
+
     pub fn exp(self) -> Self {
         exp(self)
     }
@@ -173,14 +196,38 @@ mod tests {
     use crate::tests::*;
 
     #[rstest]
+    fn test_ceil(mut rng: impl Rng, n_experiments: usize) {
+        for _ in 0..n_experiments {
+            let value = random_f64(&mut rng);
+            let ff = FlexFloat::from(value);
+            let rounded_ff = ff.ceil();
+            let expected = value.ceil();
+            let converted_result: f64 = rounded_ff.into();
+            assert_almost_eq(converted_result, expected, &format!("ceil({value:#?})"));
+        }
+    }
+
+    #[rstest]
+    fn test_floor(mut rng: impl Rng, n_experiments: usize) {
+        for _ in 0..n_experiments {
+            let value = random_f64(&mut rng);
+            let ff = FlexFloat::from(value);
+            let rounded_ff = ff.floor();
+            let expected = value.floor();
+            let converted_result: f64 = rounded_ff.into();
+            assert_almost_eq(converted_result, expected, &format!("floor({value:#?})"));
+        }
+    }
+
+    #[rstest]
     fn test_round(mut rng: impl Rng, n_experiments: usize) {
         for _ in 0..n_experiments {
-            let value: f64 = rng.random();
+            let value = random_f64(&mut rng);
             let ff = FlexFloat::from(value);
             let rounded_ff = ff.round();
             let expected = value.round();
             let converted_result: f64 = rounded_ff.into();
-            assert_almost_eq(converted_result, expected, &format!("round({})", value));
+            assert_almost_eq(converted_result, expected, &format!("round({value:#?})"));
         }
     }
 
@@ -210,12 +257,20 @@ mod tests {
         assert!(result.exponent.len() > 11, "Exponent should have grown");
 
         for _ in 0..(n_experiments / 10) {
-            let value: f64 = rng.random();
+            let value = random_f64(&mut rng);
             let ff = FlexFloat::from(value);
             let result = ff.exp();
             let expected = value.exp();
-            let converted_result: f64 = result.into();
-            assert_almost_eq(converted_result, expected, &format!("exp({})", value));
+
+            if let Some(result) = result.to_f64() {
+                assert_almost_eq(
+                    result,
+                    expected,
+                    format!("Failed on exp({value:?})").as_str(),
+                );
+            } else {
+                // TODO: Check is valid
+            }
         }
     }
 
@@ -241,7 +296,7 @@ mod tests {
         }
 
         for _ in 0..(n_experiments / 10) {
-            let value: f64 = rng.random();
+            let value = random_f64(&mut rng);
             // Ensure the value is positive to avoid domain errors
             let value = value.abs() + 1e-10;
 

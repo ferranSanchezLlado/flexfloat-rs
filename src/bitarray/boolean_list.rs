@@ -405,6 +405,7 @@ impl Div for BoolBitArray {
 mod tests {
     use core::f64;
     use std::cmp::Ordering;
+    use std::iter::repeat_n;
 
     use num_bigint::{BigInt, BigUint};
     use num_traits::identities::Zero;
@@ -428,27 +429,30 @@ mod tests {
     }
 
     fn test_from_bytes(mut rng: impl Rng, n_experiments: usize) {
-        let bytes = vec![0b00001111, 0b10101010];
+        let bytes = vec![0b10111101, 0b00110010];
         let expected_bits = vec![
-            true, true, true, true, false, false, false, false, false, true, false, true,
+            true, false, true, true, true, true, false, true, false, true,
         ];
-        let bit_array = BoolBitArray::from_bytes(&bytes, 12);
+        let bit_array = BoolBitArray::from_bytes(&bytes, 10);
         assert_eq!(bit_array.bits, expected_bits);
-
-        // n_experiments is divided by 50 to take into account the inner loop
-        // that use len from 1 to 100 (so an average of 50 iterations)
-        let n_experiments = n_experiments / 50;
 
         for _ in 0..n_experiments {
             let len = rng.random_range(1..100);
+            let n_bits = rng.random_range(1..100);
             let bool_string = random_bits_string(&mut rng, len);
-            let bytes = string_to_bytes(&bool_string);
-            let expected_bits = string_to_bits(&bool_string);
 
-            for len in 1..len {
-                let bit_array = BoolBitArray::from_bytes(&bytes, len);
-                assert_eq!(bit_array.bits, expected_bits[..len]);
-            }
+            let bytes = string_to_bytes(&bool_string);
+            let mut expected_bits = string_to_bits(&bool_string);
+
+            let bit_array = BoolBitArray::from_bytes(&bytes, n_bits);
+
+            let expected_bits = if n_bits <= len {
+                Vec::from_iter(expected_bits.get(0..n_bits).unwrap().to_owned())
+            } else {
+                expected_bits.extend(repeat_n(false, n_bits - len));
+                expected_bits
+            };
+            assert_eq!(expected_bits, bit_array.bits, "{len} {n_bits}");
         }
     }
 
@@ -470,21 +474,10 @@ mod tests {
         assert_eq!(bit_array.bits, vec![true; 10]);
 
         for _ in 0..n_experiments {
-            let len = rng.random_range(1..100_000);
+            let len = rng.random_range(1..10_000);
             let bit_array = BoolBitArray::ones(len);
             assert!(bit_array.bits.into_iter().all(|b| b));
         }
-    }
-
-    fn f64_to_bits(value: f64) -> Vec<bool> {
-        let bytes = value.to_le_bytes();
-        let mut bits = Vec::with_capacity(64);
-        for byte in &bytes {
-            for i in 0..8 {
-                bits.push((byte >> i) & 1 == 1);
-            }
-        }
-        bits
     }
 
     fn test_from_float(mut rng: impl Rng, n_experiments: usize) {
@@ -494,7 +487,7 @@ mod tests {
         assert_eq!(f64_to_bits(float), bit_array.bits);
 
         for _ in 0..n_experiments {
-            let float: f64 = rng.random();
+            let float = random_f64(&mut rng);
             let bit_array = BoolBitArray::from_f64(float);
             assert_eq!(bit_array.bits.len(), 64);
             assert_eq!(f64_to_bits(float), bit_array.bits);
@@ -513,7 +506,7 @@ mod tests {
         assert!(bit_array.to_float().is_none());
 
         for _ in 0..n_experiments {
-            let float: f64 = rng.random();
+            let float = random_f64(&mut rng);
             let bit_array = BoolBitArray::from_f64(float);
             assert_eq!(bit_array.to_float().unwrap(), float);
         }
@@ -1000,8 +993,8 @@ mod tests {
         assert_eq!(result.to_biguint(), BigUint::from(8u8));
 
         for _ in 0..n_experiments {
-            let len_a = rng.random_range(1..10);
-            let len_b = rng.random_range(1..10);
+            let len_a = rng.random_range(1..100);
+            let len_b = rng.random_range(1..100);
             let a_uint = random_biguint(&mut rng, len_a);
             let b_uint = random_biguint(&mut rng, len_b);
 

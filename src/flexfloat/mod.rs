@@ -50,7 +50,10 @@
 //!          x.sign(), x.exponent().len(), x.fraction().len());
 //! ```
 
+use std::cmp::max;
 use std::fmt::Debug;
+
+use num_bigint::BigInt;
 
 use crate::bitarray::{BitArray, DefaultBitArray};
 
@@ -453,19 +456,65 @@ impl FlexFloat<DefaultBitArray> {
 impl<B: BitArray> Debug for FlexFloat<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         {
-            f.debug_struct("FlexFloat")
+            let mut float = f.debug_struct("FlexFloat");
+
+            float
                 .field("sign", if self.sign { &'-' } else { &'+' })
                 .field("exponent", &(self.exponent.to_bigint() + 1_u8))
-                .field("fraction", &self.fraction.to_biguint())
-                .finish()
+                .field("fraction", &self.fraction.to_biguint());
+
+            if let Some(value) = self.to_f64() {
+                float.field("f64", &value);
+            }
+
+            float.finish()
         }
-        // #[cfg(not(feature = "bigint"))]
-        // {
-        //     f.debug_struct("FlexFloat")
-        //         .field("sign", &self.sign)
-        //         .field("exponent", &self.exponent.to_bits_string())
-        //         .field("fraction", &self.fraction.to_bits_string())
-        //         .finish()
-        // }
+    }
+}
+
+// https://geometrian.com/util/float/
+pub(crate) fn grow_exponent<B: BitArray>(exponent: BigInt, min_bits: usize) -> B {
+    let n_bits = exponent.bits();
+    let ones = exponent
+        .iter_u64_digits()
+        .fold(0_u64, |count, el| count + u64::from(el.count_ones()));
+    let needs_to_grow = usize::from(ones == n_bits);
+
+    // +1 for the sign in signed vs unsigned
+    let n_bits = max(n_bits as usize + needs_to_grow + 1, min_bits);
+    B::from_bigint(&exponent, n_bits).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::Rng;
+    use rstest::rstest;
+
+    use super::*;
+    use crate::tests::*;
+
+    #[rstest]
+    fn test_grow_exponent(mut rng: impl Rng, n_experiments: usize) {
+        let value = BigInt::from(127);
+        let bit_array: DefaultBitArray = grow_exponent(value.clone(), 8);
+        assert_eq!(bit_array.to_bigint(), value);
+
+        let value = BigInt::from(0b11111);
+        let bit_array: DefaultBitArray = grow_exponent(value.clone(), 0);
+        assert_eq!(bit_array.to_bigint(), value);
+
+        for _ in 0..n_experiments {
+            let n_bits = rng.random_range(1..100);
+            let value = random_bigint(&mut rng, n_bits);
+            let min_n_bits = rng.random_range(1..100);
+
+            let bit_array: DefaultBitArray = grow_exponent(value.clone(), min_n_bits);
+            assert_eq!(bit_array.to_bigint(), value);
+            assert!(
+                bit_array.len() >= min_n_bits,
+                "{} >= {min_n_bits}",
+                bit_array.len()
+            );
+        }
     }
 }
