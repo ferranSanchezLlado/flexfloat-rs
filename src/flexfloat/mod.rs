@@ -1,6 +1,6 @@
-//! # FlexFloat Module
+//! # FlexFloat Core Module
 //!
-//! Core implementation of the FlexFloat arbitrary precision floating-point type.
+//! Core implementation of the FlexFloat arbitrary-precision floating-point type.
 //! Provides IEEE 754-compatible floating-point operations with growable exponents.
 //!
 //! ## Overview
@@ -16,14 +16,6 @@
 //! - **Exponent**: Variable-width signed integer (starts at 11 bits, grows as needed)
 //! - **Fraction/Mantissa**: Fixed 52-bit fractional part for precision consistency
 //!
-//! ## Key Features
-//!
-//! - **Growable exponents**: Automatically expand to accommodate larger values
-//! - **Fixed precision**: Consistent 52-bit mantissa maintains precision
-//! - **IEEE 754 compatibility**: Full support for special values (±0, ±∞, NaN)
-//! - **Seamless conversion**: Easy interop with standard f64 values
-//! - **Generic backing**: Configurable bit array implementation
-//!
 //! ## Special Values
 //!
 //! FlexFloat supports all IEEE 754 special values:
@@ -36,436 +28,257 @@
 //! ```rust
 //! use flexfloat::prelude::*;
 //!
-//! // Basic construction
 //! let x = FlexFloat::from(3.14159);
 //! let zero = FlexFloat::zero();
 //! let inf = FlexFloat::pos_infinity();
 //!
-//! // Special value checks
 //! assert!(zero.is_zero());
-//! assert!(inf.is_infinity());
-//!
-//! // Component access
-//! println!("Sign: {}, Exponent bits: {}, Fraction bits: {}",
-//!          x.sign(), x.exponent().len(), x.fraction().len());
+//! assert!(inf.is_infinite());
 //! ```
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
-use crate::bitarray::{BitArray, DefaultBitArray};
+use crate::bitarray::BitArray;
 
+pub mod accessors;
 pub mod arithmetic;
+pub mod classify;
 pub mod cmp;
+pub mod construct;
+pub mod consts;
 pub mod converter;
+pub mod display;
+pub mod error;
+pub mod internal;
 pub mod math;
+pub mod order;
 
-/// A flexible precision floating-point number with growable exponents.
+// Re-export the pub(crate) internals so existing paths like
+// `crate::flexfloat::grow_exponent` keep working.
+pub(crate) use internal::{RoundedResult, grow_exponent, truncate_fraction};
+
+/// A flexible-precision floating-point number with growable exponents.
 ///
 /// FlexFloat represents floating-point numbers using a configurable bit array
-/// backend, allowing for arbitrary precision arithmetic while maintaining
+/// backend, allowing for arbitrary-precision arithmetic while maintaining
 /// compatibility with IEEE 754 standards.
 ///
 /// # Type Parameters
 ///
-/// * `B` - The BitArray implementation used for internal storage
+/// * `Exp` - The [`BitArray`] implementation used for the exponent field.
+/// * `Frac` - The [`BitArray`] implementation used for the fraction field
+///   (defaults to `Exp` so that `FlexFloat<B, B>` is a valid shorthand).
 ///
 /// # Components
 ///
 /// - `sign`: Boolean indicating number sign (false = positive, true = negative)
-/// - `exponent`: Variable-width signed exponent field
+/// - `exponent`: Variable-width signed exponent field (minimum 11 bits)
 /// - `fraction`: Fixed-width mantissa/fraction field (52 bits)
-///
-/// # Memory Efficiency
-///
-/// The exponent field grows only when needed, starting at 11 bits (IEEE 754 standard)
-/// and expanding to accommodate larger values. The fraction remains fixed at 52 bits
-/// to maintain precision consistency.
-
 #[derive(Clone)]
-pub struct FlexFloat<B> {
-    sign: bool,
-    exponent: B,
-    fraction: B,
+pub struct FlexFloat<Exp, Frac = Exp> {
+    pub(crate) sign: bool,
+    pub(crate) exponent: Exp,
+    pub(crate) fraction: Frac,
 }
 
-impl<B: BitArray> FlexFloat<B> {
-    /// Creates a new FlexFloat with the specified components.
-    ///
-    /// # Arguments
-    ///
-    /// * `sign` - Sign bit (false for positive, true for negative)
-    /// * `exponent` - Exponent bit array
-    /// * `fraction` - Fraction/mantissa bit array
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let exp = DefaultBitArray::from_bits(&[true, false, true]);
-    /// let frac = DefaultBitArray::zeros(52);
-    /// let num = FlexFloat::new(false, exp, frac);
-    /// ```
-    pub const fn new(sign: bool, exponent: B, fraction: B) -> Self {
-        Self {
-            sign,
-            exponent,
-            fraction,
-        }
-    }
-
-    /// Creates a new FlexFloat representing zero with the specified sign.
-    ///
-    /// # Arguments
-    ///
-    /// * `sign` - Sign bit for the zero value
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let pos_zero: FlexFloat<DefaultBitArray> = FlexFloat::new_zero_with_sign(false);
-    /// let neg_zero: FlexFloat<DefaultBitArray> = FlexFloat::new_zero_with_sign(true);
-    ///
-    /// assert!(pos_zero.is_zero() && !pos_zero.sign());
-    /// assert!(neg_zero.is_zero() && neg_zero.sign());
-    /// ```
-    pub fn new_zero_with_sign(sign: bool) -> Self {
-        Self {
-            sign,
-            exponent: B::zeros(11),
-            fraction: B::zeros(52),
-        }
-    }
-
-    /// Creates a new FlexFloat representing positive zero.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let zero: FlexFloat<DefaultBitArray> = FlexFloat::new_zero();
-    /// assert!(zero.is_zero() && !zero.sign());
-    /// ```
-    pub fn new_zero() -> Self {
-        Self::new_zero_with_sign(false)
-    }
-
-    /// Creates a new FlexFloat representing NaN (Not-a-Number).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let nan: FlexFloat<DefaultBitArray> = FlexFloat::new_nan();
-    /// assert!(nan.is_nan());
-    /// ```
-    pub fn new_nan() -> Self {
-        Self {
-            sign: false, // Sign doesn't matter for NaN
-            exponent: B::ones(11),
-            fraction: B::ones(52),
-        }
-    }
-
-    /// Creates a new FlexFloat representing infinity with the specified sign.
-    ///
-    /// # Arguments
-    ///
-    /// * `sign` - Sign bit for the infinity value
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let pos_inf: FlexFloat<DefaultBitArray> = FlexFloat::new_infinity(false);
-    /// let neg_inf: FlexFloat<DefaultBitArray> = FlexFloat::new_infinity(true);
-    /// assert!(pos_inf.is_infinity() && !pos_inf.sign());
-    /// assert!(neg_inf.is_infinity() && neg_inf.sign());
-    /// ```
-    pub fn new_infinity(sign: bool) -> Self {
-        Self {
-            sign,
-            exponent: B::ones(11),
-            fraction: B::zeros(52),
-        }
-    }
-
-    /// Checks if the exponent represents a special value (all ones).
-    ///
-    /// Special exponents indicate infinity or NaN values in IEEE 754 format.
-    fn is_special_exponent(&self) -> bool {
-        self.exponent.iter_bits().all(|b| b)
-    }
-
-    /// Returns true if this FlexFloat represents NaN (Not-a-Number).
-    ///
-    /// A value is NaN if it has a special exponent (all ones) and a non-zero fraction.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let nan = FlexFloat::nan();
-    /// assert!(nan.is_nan());
-    ///
-    /// let normal = FlexFloat::from(3.14);
-    /// assert!(!normal.is_nan());
-    /// ```
-    pub fn is_nan(&self) -> bool {
-        self.is_special_exponent() && self.fraction.iter_bits().any(|b| b)
-    }
-
-    /// Returns true if this FlexFloat represents infinity.
-    ///
-    /// A value is infinity if it has a special exponent (all ones) and a zero fraction.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let inf = FlexFloat::pos_infinity();
-    /// assert!(inf.is_infinity());
-    ///
-    /// let finite = FlexFloat::from(1.0);
-    /// assert!(!finite.is_infinity());
-    /// ```
-    pub fn is_infinity(&self) -> bool {
-        self.is_special_exponent() && self.fraction.iter_bits().all(|b| !b)
-    }
-
-    /// Returns true if this FlexFloat represents zero.
-    ///
-    /// A value is zero if both the exponent and fraction are all zeros.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let zero = FlexFloat::zero();
-    /// assert!(zero.is_zero());
-    ///
-    /// let non_zero = FlexFloat::from(0.1);
-    /// assert!(!non_zero.is_zero());
-    /// ```
-    pub fn is_zero(&self) -> bool {
-        self.exponent.iter_bits().all(|b| !b) && self.fraction.iter_bits().all(|b| !b)
-    }
-
-    /// Returns the sign bit of this FlexFloat.
-    ///
-    /// # Returns
-    ///
-    /// false for positive numbers, true for negative numbers
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let pos = FlexFloat::from(3.14);
-    /// let neg = FlexFloat::from(-2.71);
-    /// assert!(!pos.sign());
-    /// assert!(neg.sign());
-    /// ```
-    pub fn sign(&self) -> bool {
-        self.sign
-    }
-
-    /// Returns a reference to the exponent bit array.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let num = FlexFloat::from(8.0);
-    /// println!("Exponent has {} bits", num.exponent().len());
-    /// ```
-    pub fn exponent(&self) -> &B {
-        &self.exponent
-    }
-
-    /// Returns a reference to the fraction bit array.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let num = FlexFloat::from(3.14159);
-    /// println!("Fraction has {} bits", num.fraction().len());
-    /// ```
-    pub fn fraction(&self) -> &B {
-        &self.fraction
+impl<Exp: BitArray, Frac: BitArray> Debug for FlexFloat<Exp, Frac> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FlexFloat")
+            .field("sign", if self.sign { &'-' } else { &'+' })
+            .field("exponent", &(self.exponent.to_bigint() + 1_u8))
+            .field("fraction", &self.fraction.to_biguint())
+            .field("f64_value", &self.to_f64())
+            .finish()
     }
 }
 
-impl FlexFloat<DefaultBitArray> {
-    /// Creates a new `FlexFloat` instance representing zero.
-    ///
-    /// This is a convenience constructor that creates a `FlexFloat` with the value of zero
-    /// using the default bit array representation.
-    ///
-    /// # Returns
-    ///
-    /// A new `FlexFloat<DefaultBitArray>` instance with the value zero.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let zero = FlexFloat::zero();
-    /// assert_eq!(zero.to_f64(), Some(0.0));
-    /// ```
-    pub fn zero() -> Self {
-        Self::new_zero()
-    }
+#[cfg(test)]
+mod tests {
+    use core::cmp::Ordering;
+    use core::num::FpCategory;
 
-    /// Creates a new `FlexFloat` instance representing zero with the specified sign.
-    ///
-    /// This is a convenience constructor that creates a `FlexFloat` with the value of 0
-    /// using the default bit array representation.
-    ///
-    /// # Arguments
-    ///
-    /// * `sign` - The sign bit (false for +0, true for -0)
-    ///
-    /// # Returns
-    ///
-    /// A new `FlexFloat<DefaultBitArray>` instance representing zero.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let pos_zero = FlexFloat::zero_with_sign(false);
-    /// let neg_zero = FlexFloat::zero_with_sign(true);
-    /// assert!(pos_zero.is_zero() && !pos_zero.sign());
-    /// assert!(neg_zero.is_zero() && neg_zero.sign());
-    /// ```
-    pub fn zero_with_sign(sign: bool) -> Self {
-        Self::new_zero_with_sign(sign)
-    }
+    use rand::Rng;
+    use rstest::rstest;
 
-    /// Creates a new `FlexFloat` instance representing NaN (Not-a-Number).
-    ///
-    /// This is a convenience constructor that creates a `FlexFloat` with the value of NaN
-    /// using the default bit array representation.
-    ///
-    /// # Returns
-    ///
-    /// A new `FlexFloat<DefaultBitArray>` instance representing NaN.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let nan = FlexFloat::nan();
-    /// assert!(nan.is_nan());
-    /// ```
-    pub fn nan() -> Self {
-        Self::new_nan()
-    }
+    use super::*;
+    use crate::bitarray::DefaultBitArray;
+    use crate::bitarray::{BitArrayAccess, BitArrayConversion};
+    use crate::flexfloat::internal::grow_exponent;
+    use crate::test_support::*;
 
-    /// Creates a new `FlexFloat` instance representing positive infinity.
-    ///
-    /// This is a convenience constructor that creates a `FlexFloat` with the value of +inf
-    /// using the default bit array representation.
-    ///
-    /// # Returns
-    ///
-    /// A new `FlexFloat<DefaultBitArray>` instance representing positive infinity.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let pos_inf = FlexFloat::pos_infinity();
-    /// assert!(pos_inf.is_infinity());
-    /// assert!(!pos_inf.sign());
-    /// ```
-    pub fn pos_infinity() -> Self {
-        Self::new_infinity(false)
-    }
+    #[rstest]
+    fn test_grow_exponent(mut rng: impl Rng, n_experiments: usize) {
+        use num_bigint::BigInt;
 
-    /// Creates a new `FlexFloat` instance representing negative infinity.
-    ///
-    /// This is a convenience constructor that creates a `FlexFloat` with the value of -inf
-    /// using the default bit array representation.
-    ///
-    /// # Returns
-    ///
-    /// A new `FlexFloat<DefaultBitArray>` instance representing negative infinity.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let neg_inf = FlexFloat::neg_infinity();
-    /// assert!(neg_inf.is_infinity());
-    /// assert!(neg_inf.sign());
-    /// ```
-    pub fn neg_infinity() -> Self {
-        Self::new_infinity(true)
-    }
+        let value = BigInt::from(127);
+        let bit_array: DefaultBitArray = grow_exponent(value.clone(), 8);
+        assert_eq!(bit_array.to_bigint(), value);
 
-    /// Creates a new `FlexFloat` instance representing infinity with the specified sign.
-    ///
-    /// This is a convenience constructor that creates a `FlexFloat` with the value of inf
-    /// using the default bit array representation.
-    ///
-    /// # Arguments
-    ///
-    /// * `sign` - The sign bit (false for +inf, true for -inf)
-    ///
-    /// # Returns
-    ///
-    /// A new `FlexFloat<DefaultBitArray>` instance representing infinity.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::FlexFloat;
-    ///
-    /// let pos_inf = FlexFloat::infinity(false);
-    /// let neg_inf = FlexFloat::infinity(true);
-    /// assert!(pos_inf.is_infinity() && !pos_inf.sign());
-    /// assert!(neg_inf.is_infinity() && neg_inf.sign());
-    /// ```
-    pub fn infinity(sign: bool) -> Self {
-        Self::new_infinity(sign)
-    }
-}
+        let value = BigInt::from(0b11111);
+        let bit_array: DefaultBitArray = grow_exponent(value.clone(), 0);
+        assert_eq!(bit_array.to_bigint(), value);
 
-impl<B: BitArray> Debug for FlexFloat<B> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        {
-            f.debug_struct("FlexFloat")
-                .field("sign", if self.sign { &'-' } else { &'+' })
-                .field("exponent", &(self.exponent.to_bigint() + 1_u8))
-                .field("fraction", &self.fraction.to_biguint())
-                .finish()
+        for _ in 0..n_experiments {
+            let n_bits = rng.random_range(1..100);
+            let value = random_bigint(&mut rng, n_bits);
+            let min_n_bits = rng.random_range(1..100);
+
+            let bit_array: DefaultBitArray = grow_exponent(value.clone(), min_n_bits);
+            assert_eq!(bit_array.to_bigint(), value);
+            assert!(
+                bit_array.len() >= min_n_bits,
+                "{} >= {min_n_bits}",
+                bit_array.len()
+            );
         }
-        // #[cfg(not(feature = "bigint"))]
-        // {
-        //     f.debug_struct("FlexFloat")
-        //         .field("sign", &self.sign)
-        //         .field("exponent", &self.exponent.to_bits_string())
-        //         .field("fraction", &self.fraction.to_bits_string())
-        //         .finish()
-        // }
+    }
+
+    #[rstest]
+    fn test_classification_predicates(mut rng: impl Rng, n_experiments: usize) {
+        let normal = FlexFloat::<DefaultBitArray>::from(1.5);
+        assert!(normal.is_finite());
+        assert!(normal.is_normal());
+        assert!(!normal.is_subnormal());
+
+        let zero = FlexFloat::<DefaultBitArray>::zero();
+        assert!(zero.is_finite());
+        assert!(!zero.is_normal());
+        assert!(!zero.is_subnormal());
+
+        let nan = FlexFloat::<DefaultBitArray>::nan();
+        assert!(!nan.is_finite());
+        assert!(!nan.is_normal());
+        assert!(!nan.is_subnormal());
+
+        let pos_infinity = FlexFloat::<DefaultBitArray>::pos_infinity();
+        assert!(!pos_infinity.is_finite());
+        assert!(!pos_infinity.is_normal());
+        assert!(!pos_infinity.is_subnormal());
+
+        let neg_infinity = FlexFloat::<DefaultBitArray>::neg_infinity();
+        assert!(!neg_infinity.is_finite());
+        assert!(!neg_infinity.is_normal());
+        assert!(!neg_infinity.is_subnormal());
+
+        let subnormal = FlexFloat::<DefaultBitArray>::from(f64::from_bits(1));
+        assert!(subnormal.is_finite());
+        assert!(!subnormal.is_normal());
+        assert!(
+            subnormal.is_subnormal(),
+            "expected subnormal, got {subnormal:?}"
+        );
+
+        let huge =
+            FlexFloat::<DefaultBitArray>::from(f64::MAX) * FlexFloat::<DefaultBitArray>::from(2.0);
+        assert!(huge.exponent().len() > 11, "precondition: exponent grew");
+        assert!(huge.is_finite());
+        assert!(huge.is_normal());
+        assert!(!huge.is_subnormal());
+
+        for _ in 0..n_experiments {
+            let value = random_f64(&mut rng);
+            let ff = FlexFloat::<DefaultBitArray>::from(value);
+
+            assert_eq!(ff.is_finite(), value.is_finite(), "is_finite({value:?})");
+            assert_eq!(ff.is_normal(), value.is_normal(), "is_normal({value:?})");
+            assert_eq!(
+                ff.is_subnormal(),
+                value.is_subnormal(),
+                "is_subnormal({value:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_min_max_clamp_and_adjacent_helpers() {
+        let nan = FlexFloat::<DefaultBitArray>::nan();
+        let neg_zero = FlexFloat::<DefaultBitArray>::zero_with_sign(true);
+        let pos_zero = FlexFloat::<DefaultBitArray>::zero();
+        let one = FlexFloat::<DefaultBitArray>::from(1.0);
+        let two = FlexFloat::<DefaultBitArray>::from(2.0);
+        let subnormal = FlexFloat::<DefaultBitArray>::from(f64::from_bits(1));
+
+        assert_eq!(nan.classify(), FpCategory::Nan);
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::pos_infinity().classify(),
+            FpCategory::Infinite
+        );
+        assert_eq!(pos_zero.classify(), FpCategory::Zero);
+        assert_eq!(subnormal.classify(), FpCategory::Subnormal);
+        assert_eq!(one.classify(), FpCategory::Normal);
+
+        assert_eq!(one.clone().min(two.clone()).to_f64(), Some(1.0));
+        assert_eq!(one.clone().max(two.clone()).to_f64(), Some(2.0));
+        assert_eq!(nan.clone().min(one.clone()).to_f64(), Some(1.0));
+        assert_eq!(nan.max(one.clone()).to_f64(), Some(1.0));
+        assert_eq!(
+            pos_zero
+                .clone()
+                .min(neg_zero.clone())
+                .to_f64()
+                .unwrap()
+                .to_bits(),
+            (-0.0f64).to_bits()
+        );
+        assert_eq!(
+            pos_zero
+                .clone()
+                .max(neg_zero.clone())
+                .to_f64()
+                .unwrap()
+                .to_bits(),
+            0.0f64.to_bits()
+        );
+
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::from(3.0)
+                .clamp(one.clone(), two.clone())
+                .to_f64(),
+            Some(2.0)
+        );
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::from(-1.0)
+                .clamp(one.clone(), two.clone())
+                .to_f64(),
+            Some(1.0)
+        );
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::from(1.5)
+                .clamp(one.clone(), two.clone())
+                .to_f64(),
+            Some(1.5)
+        );
+
+        assert_eq!(
+            pos_zero.clone().next_down().to_f64().unwrap().to_bits(),
+            (-f64::from_bits(1)).to_bits()
+        );
+        assert_eq!(
+            neg_zero.clone().next_up().to_f64().unwrap().to_bits(),
+            f64::from_bits(1).to_bits()
+        );
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::from(1.0)
+                .next_up()
+                .to_f64()
+                .unwrap()
+                .to_bits(),
+            1.0f64.to_bits() + 1
+        );
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::from(1.0)
+                .next_down()
+                .to_f64()
+                .unwrap()
+                .to_bits(),
+            1.0f64.to_bits() - 1
+        );
+
+        assert_eq!(neg_zero.total_cmp(&pos_zero), Ordering::Less);
+        assert_eq!(pos_zero.total_cmp(&neg_zero), Ordering::Greater);
+        assert_eq!(
+            FlexFloat::<DefaultBitArray>::from(1.0).total_cmp(&FlexFloat::from(2.0)),
+            1.0f64.total_cmp(&2.0)
+        );
     }
 }
