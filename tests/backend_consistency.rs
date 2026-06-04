@@ -83,4 +83,31 @@ proptest! {
         let result_usize = (a_usize / b_usize).to_bits();
         prop_assert_eq!(trim(result_bool), trim(result_usize));
     }
+
+    #[test]
+    fn arithmetic_length_contract(a_bits in arb_bits(1, 128), b_bits in arb_bits(1, 128)) {
+        let a_bool = BoolBitArray::from_bits(&a_bits);
+        let b_bool = BoolBitArray::from_bits(&b_bits);
+        let a_uint = a_bool.to_biguint();
+        let b_uint = b_bool.to_biguint();
+
+        let add_result = BoolBitArray::from_bits(&a_bits) + BoolBitArray::from_bits(&b_bits);
+        let add_expected_bits = (&a_uint + &b_uint).bits() as usize;
+        prop_assert!(add_result.len() >= add_expected_bits);
+
+        let mul_result = BoolBitArray::from_bits(&a_bits) * BoolBitArray::from_bits(&b_bits);
+        let mul_expected_bits = (&a_uint * &b_uint).bits() as usize;
+        prop_assert!(mul_result.len() >= mul_expected_bits);
+
+        prop_assume!(b_uint != BigUint::from(0u8));
+        let div_result = BoolBitArray::from_bits(&a_bits) / BoolBitArray::from_bits(&b_bits);
+        let div_expected_bits = (&a_uint / &b_uint).bits() as usize;
+        prop_assert!(div_result.len() >= div_expected_bits);
+
+        if a_uint >= b_uint {
+            let sub_result = BoolBitArray::from_bits(&a_bits) - BoolBitArray::from_bits(&b_bits);
+            let sub_expected_bits = (&a_uint - &b_uint).bits() as usize;
+            prop_assert!(sub_result.len() >= sub_expected_bits);
+        }
+    }
 }

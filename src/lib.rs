@@ -66,7 +66,7 @@ pub mod bitarray;
 pub mod flexfloat;
 
 // Re-export the main types for convenience
-pub use bitarray::{BitArray, BoolBitArray, DefaultBitArray};
+pub use bitarray::{BitArray, BitArrayArith, BoolBitArray, DefaultBitArray};
 pub use flexfloat::FlexFloat;
 pub use flexfloat::math;
 
@@ -159,8 +159,8 @@ macro_rules! assert_ff_almost_eq {
 pub mod prelude {
     pub use crate::assert_ff_almost_eq;
     pub use crate::bitarray::traits::{
-        BitArray, BitArrayAccess, BitArrayConstruction, BitArrayConversion, BitArrayManipulation,
-        BitArrayMutAccess,
+        BitArray, BitArrayAccess, BitArrayArith, BitArrayConstruction, BitArrayConversion,
+        BitArrayManipulation, BitArrayMutAccess,
     };
     pub use crate::bitarray::{BoolBitArray, DefaultBitArray};
     pub use crate::flexfloat::FlexFloat;

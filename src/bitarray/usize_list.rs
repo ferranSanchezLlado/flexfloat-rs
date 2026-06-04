@@ -1,9 +1,11 @@
 use core::cmp::max;
+use core::ops::Range;
 use core::ops::{Add, Div, Mul, Sub};
 use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
 
 use num_traits::Euclid;
 
+use crate::bitarray::backend::BitArrayPrimitives;
 use crate::bitarray::bit_ref::BitRef;
 use crate::prelude::{
     BitArrayAccess, BitArrayConstruction, BitArrayConversion, BitArrayManipulation,
@@ -15,6 +17,41 @@ pub struct UsizeBitArray {
     words: Vec<usize>,
     length: usize,
 }
+
+impl Default for UsizeBitArray {
+    fn default() -> Self {
+        Self {
+            words: Vec::new(),
+            length: 0,
+        }
+    }
+}
+
+impl PartialEq for UsizeBitArray {
+    fn eq(&self, other: &Self) -> bool {
+        if self.length != other.length {
+            return false;
+        }
+
+        let words = self.used_words().max(other.used_words());
+        for i in 0..words {
+            let mask = if i + 1 == words {
+                Self::tail_mask(self.length)
+            } else {
+                usize::MAX
+            };
+            let lhs = self.words.get(i).copied().unwrap_or(0) & mask;
+            let rhs = other.words.get(i).copied().unwrap_or(0) & mask;
+            if lhs != rhs {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+impl Eq for UsizeBitArray {}
 
 struct UsizeBitIterator<'a> {
     data: &'a [usize],
@@ -56,29 +93,109 @@ impl ExactSizeIterator for UsizeBitIterator<'_> {
     }
 }
 
-impl BitArrayConstruction for UsizeBitArray {
-    fn from_bytes(bytes: &[u8], n_bits: usize) -> Self {
-        let bits_per_word = usize::BITS as usize;
-        let n_words = n_bits.div_ceil(bits_per_word);
-        let mut words = vec![0usize; n_words];
+impl UsizeBitArray {
+    #[inline]
+    const fn bits_per_word() -> usize {
+        usize::BITS as usize
+    }
 
-        for bit_index in 0..n_bits {
-            let byte_index = bit_index / 8;
-            let bit_in_byte = bit_index % 8;
-            let bit_is_set =
-                byte_index < bytes.len() && ((bytes[byte_index] >> bit_in_byte) & 1) == 1;
+    #[inline]
+    fn used_words(&self) -> usize {
+        self.length.div_ceil(Self::bits_per_word())
+    }
 
-            if bit_is_set {
-                let word_index = bit_index / bits_per_word;
-                let bit_in_word = bit_index % bits_per_word;
-                words[word_index] |= 1usize << bit_in_word;
+    #[inline]
+    fn tail_mask(length: usize) -> usize {
+        let rem = length % Self::bits_per_word();
+        if rem == 0 {
+            usize::MAX
+        } else {
+            (1usize << rem) - 1
+        }
+    }
+
+    fn clear_unused_tail_bits(&mut self) {
+        if self.length == 0 {
+            self.words.clear();
+            return;
+        }
+
+        let used_words = self.used_words();
+        self.words.truncate(used_words);
+        if let Some(last) = self.words.last_mut() {
+            *last &= Self::tail_mask(self.length);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn add_one_in_place(&mut self) {
+        let used_words = self.used_words();
+
+        if used_words == 0 {
+            self.words.push(1);
+            self.length = 1;
+            return;
+        }
+
+        for i in 0..used_words {
+            let mask = if i + 1 == used_words {
+                Self::tail_mask(self.length)
+            } else {
+                usize::MAX
+            };
+            let word = self.words[i] & mask;
+            if word != mask {
+                self.words[i] = (word + 1) & mask;
+                for lower in 0..i {
+                    self.words[lower] = 0;
+                }
+                return;
             }
         }
 
-        Self {
+        for word in &mut self.words[..used_words] {
+            *word = 0;
+        }
+
+        self.length += 1;
+        let bit_index = self.length - 1;
+        let word_index = bit_index / Self::bits_per_word();
+        let bit_in_word = bit_index % Self::bits_per_word();
+        if word_index >= self.words.len() {
+            self.words.push(0);
+        }
+        self.words[word_index] |= 1usize << bit_in_word;
+        self.clear_unused_tail_bits();
+    }
+}
+
+impl BitArrayConstruction for UsizeBitArray {
+    fn from_bytes(bytes: &[u8], n_bits: usize) -> Self {
+        // A7: word-copy from_bytes — copy whole bytes directly into word storage.
+        // LE byte order matches LE word order, so no per-bit iteration needed.
+        let bits_per_word = usize::BITS as usize;
+        let bytes_per_word = bits_per_word / 8;
+        let n_words = n_bits.div_ceil(bits_per_word);
+        let mut words = vec![0usize; n_words];
+
+        for (word_idx, word) in words.iter_mut().enumerate() {
+            let byte_start = word_idx * bytes_per_word;
+            let mut w = 0usize;
+            for k in 0..bytes_per_word {
+                let byte_pos = byte_start + k;
+                if byte_pos < bytes.len() {
+                    w |= (bytes[byte_pos] as usize) << (k * 8);
+                }
+            }
+            *word = w;
+        }
+
+        let mut result = Self {
             words,
             length: n_bits,
-        }
+        };
+        result.clear_unused_tail_bits();
+        result
     }
 }
 
@@ -99,6 +216,49 @@ impl BitArrayAccess for UsizeBitArray {
             Some((self.words[word_i] & (1_usize << bit_i)) > 0)
         }
     }
+
+    fn get_range(&self, range: Range<usize>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        if range.start > range.end || range.end > self.length {
+            return None;
+        }
+
+        let len = range.end - range.start;
+        if len == 0 {
+            return Some(UsizeBitArray {
+                words: Vec::new(),
+                length: 0,
+            });
+        }
+
+        // S4: word-aligned extraction — extract bits [range.start..range.end)
+        // by shifting each destination word from two consecutive source words.
+        let bits_per_word = Self::bits_per_word();
+        let src_word_start = range.start / bits_per_word;
+        let bit_offset = range.start % bits_per_word;
+        let n_result_words = len.div_ceil(bits_per_word);
+
+        let mut words = vec![0usize; n_result_words];
+
+        if bit_offset == 0 {
+            // Fast path: word-aligned source
+            for i in 0..n_result_words {
+                words[i] = self.words.get(src_word_start + i).copied().unwrap_or(0);
+            }
+        } else {
+            for i in 0..n_result_words {
+                let lo = self.words.get(src_word_start + i).copied().unwrap_or(0);
+                let hi = self.words.get(src_word_start + i + 1).copied().unwrap_or(0);
+                words[i] = (lo >> bit_offset) | (hi << (bits_per_word - bit_offset));
+            }
+        }
+
+        let mut result = UsizeBitArray { words, length: len };
+        result.clear_unused_tail_bits();
+        Some(result)
+    }
 }
 
 impl BitArrayMutAccess for UsizeBitArray {
@@ -113,66 +273,260 @@ impl BitArrayMutAccess for UsizeBitArray {
             Some(BitRef::new(&mut self.words[word_i], bit_mask))
         }
     }
-
-    fn get_range(&self, range: std::ops::Range<usize>) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        if range.start > range.end || range.end > self.length {
-            return None;
-        }
-        let mut bits = Vec::with_capacity(range.end - range.start);
-        for i in range.clone() {
-            bits.push(self.get(i).unwrap_or(false));
-        }
-        Some(UsizeBitArray::from_bits(&bits))
-    }
 }
 
-impl BitArrayManipulation for UsizeBitArray {
+impl BitArrayPrimitives for UsizeBitArray {
     fn append_bool(&mut self, value: bool) {
-        let bits_per_word = usize::BITS as usize;
         let bit_index = self.length;
-        let word_index = bit_index / bits_per_word;
-        let bit_in_word = bit_index % bits_per_word;
+        let word_index = bit_index / Self::bits_per_word();
+        let bit_in_word = bit_index % Self::bits_per_word();
+
         if word_index >= self.words.len() {
             self.words.push(0);
         }
         if value {
-            self.words[word_index] |= 1 << bit_in_word;
+            self.words[word_index] |= 1usize << bit_in_word;
         }
         self.length += 1;
     }
+
+    fn fill_range(&mut self, range: Range<usize>, value: bool) {
+        let end = range.end.min(self.length);
+        for index in range.start.min(end)..end {
+            let (word_i, bit_i) = index.div_rem_euclid(&Self::bits_per_word());
+            let bit_mask = 1usize << bit_i;
+            if value {
+                self.words[word_i] |= bit_mask;
+            } else {
+                self.words[word_i] &= !bit_mask;
+            }
+        }
+        self.clear_unused_tail_bits();
+    }
+
+    fn copy_within_bits(&mut self, src: Range<usize>, dst_start: usize) {
+        if src.start >= src.end || src.end > self.length || dst_start >= self.length {
+            return;
+        }
+
+        let count = (src.end - src.start).min(self.length - dst_start);
+        if count == 0 {
+            return;
+        }
+
+        // S2: word-level copy-with-shift.
+        // Strategy: extract the source range (already O(count/word_size) via get_range),
+        // then write the extracted bits back into [dst_start..dst_start+count].
+        let extracted = self.get_range(src.start..src.start + count).unwrap();
+
+        let bits_per_word = Self::bits_per_word();
+        let dst_word_start = dst_start / bits_per_word;
+        let dst_offset = dst_start % bits_per_word;
+        let n_src_words = count.div_ceil(bits_per_word);
+
+        if dst_offset == 0 {
+            // Aligned destination: just write whole words with tail mask
+            for i in 0..n_src_words {
+                let sw = extracted.words.get(i).copied().unwrap_or(0);
+                let bits_remaining = count - i * bits_per_word;
+                let bits_this_word = bits_remaining.min(bits_per_word);
+                let mask: usize = if bits_this_word == bits_per_word {
+                    usize::MAX
+                } else {
+                    (1usize << bits_this_word) - 1
+                };
+                let dw = dst_word_start + i;
+                if dw < self.words.len() {
+                    self.words[dw] = (self.words[dw] & !mask) | (sw & mask);
+                }
+            }
+        } else {
+            // Unaligned destination: each source word contributes to two destination words
+            for i in 0..n_src_words {
+                let sw = extracted.words.get(i).copied().unwrap_or(0);
+                let bits_remaining = count - i * bits_per_word;
+                let bits_this_src_word = bits_remaining.min(bits_per_word);
+
+                // Low part → current dst word
+                let dw = dst_word_start + i;
+                let bits_to_low = (bits_per_word - dst_offset).min(bits_this_src_word);
+                let low_mask: usize = ((1usize << bits_to_low) - 1) << dst_offset;
+                if dw < self.words.len() {
+                    self.words[dw] = (self.words[dw] & !low_mask) | ((sw << dst_offset) & low_mask);
+                }
+
+                // High part → next dst word (spill)
+                if bits_to_low < bits_this_src_word {
+                    let spill_bits = bits_this_src_word - bits_to_low;
+                    let spill_mask: usize = (1usize << spill_bits) - 1;
+                    let spill_val = sw >> (bits_per_word - dst_offset);
+                    let next_dw = dw + 1;
+                    if next_dw < self.words.len() {
+                        self.words[next_dw] =
+                            (self.words[next_dw] & !spill_mask) | (spill_val & spill_mask);
+                    }
+                }
+            }
+        }
+
+        self.clear_unused_tail_bits();
+    }
+
+    fn extend_with(&mut self, count: usize, value: bool) {
+        if count == 0 {
+            return;
+        }
+
+        self.reserve(count);
+        for _ in 0..count {
+            self.append_bool(value);
+        }
+    }
+
+    fn truncate_in_place(&mut self, n_bits: usize) {
+        if n_bits >= self.length {
+            return;
+        }
+
+        self.length = n_bits;
+        self.clear_unused_tail_bits();
+    }
+
+    fn reserve(&mut self, n_bits: usize) {
+        if n_bits == 0 {
+            return;
+        }
+
+        let required_words = (self.length + n_bits).div_ceil(Self::bits_per_word());
+        let additional_words = required_words.saturating_sub(self.words.len());
+        self.words.reserve(additional_words);
+    }
+
+    fn any_set_below(&self, bit_index: usize) -> bool {
+        let end = bit_index.min(self.length);
+        if end == 0 {
+            return false;
+        }
+
+        let full_words = end / Self::bits_per_word();
+        if self.words[..full_words.min(self.words.len())]
+            .iter()
+            .any(|&word| word != 0)
+        {
+            return true;
+        }
+
+        let rem = end % Self::bits_per_word();
+        if rem == 0 || full_words >= self.words.len() {
+            return false;
+        }
+
+        (self.words[full_words] & ((1usize << rem) - 1)) != 0
+    }
 }
+
+impl BitArrayManipulation for UsizeBitArray {}
 
 impl BitArrayConversion for UsizeBitArray {
     fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![0u8; self.length.div_ceil(8)];
-        for i in 0..self.length {
-            if let Some(true) = self.get(i) {
-                let byte_index = i / 8;
-                let bit_in_byte = i % 8;
-                bytes[byte_index] |= 1 << bit_in_byte;
+        // S3: word-splat to_bytes — copy whole words into byte buffer.
+        let n_bytes = self.length.div_ceil(8);
+        if n_bytes == 0 {
+            return Vec::new();
+        }
+        let bytes_per_word = usize::BITS as usize / 8;
+        let mut bytes = vec![0u8; n_bytes];
+        for (i, &w) in self.words.iter().enumerate() {
+            let start = i * bytes_per_word;
+            if start >= n_bytes {
+                break;
+            }
+            let take = (n_bytes - start).min(bytes_per_word);
+            bytes[start..start + take].copy_from_slice(&w.to_le_bytes()[..take]);
+        }
+        // Mask trailing bits in last byte if length is not byte-aligned
+        if self.length % 8 != 0 {
+            let mask = (1u8 << (self.length % 8)) - 1;
+            if let Some(last) = bytes.last_mut() {
+                *last &= mask;
             }
         }
         bytes
+    }
+
+    fn to_biguint(&self) -> num_bigint::BigUint {
+        // S3: avoid intermediate Vec<u8> when building BigUint
+        num_bigint::BigUint::from_bytes_le(&self.to_bytes())
     }
 }
 
 impl Add for UsizeBitArray {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        let a = self.to_biguint();
-        let b = rhs.to_biguint();
-        let sum = a + b;
-        UsizeBitArray::from_biguint(&sum)
+    fn add(mut self, rhs: Self) -> Self::Output {
+        // Native word-level ripple-carry addition — no BigUint round-trip.
+        let a_words = self.used_words();
+        let b_words = rhs.used_words();
+        let max_words = max(a_words, b_words);
+
+        // Pre-allocate up to one extra word for a potential final carry.
+        if self.words.len() < max_words {
+            self.words.resize(max_words, 0);
+        }
+
+        let mut carry: usize = 0;
+        for i in 0..max_words {
+            let a = self.words[i];
+            let b = rhs.words.get(i).copied().unwrap_or(0);
+            let (s1, c1) = a.overflowing_add(b);
+            let (s2, c2) = s1.overflowing_add(carry);
+            self.words[i] = s2;
+            carry = (c1 as usize) + (c2 as usize);
+        }
+
+        if carry > 0 {
+            self.words.push(carry);
+        }
+
+        // Re-derive length from the actual word content so the result
+        // always represents the full mathematical sum (may grow past the
+        // combined operand lengths if there is a carry into a new word, or
+        // if bits spill above the operand lengths within the last word).
+        self.length = {
+            let mut len = self.words.len() * Self::bits_per_word();
+            // Trim trailing zero words.
+            while len > 0 {
+                let word_idx = (len - 1) / Self::bits_per_word();
+                let word = self.words.get(word_idx).copied().unwrap_or(0);
+                let mask = Self::tail_mask(len);
+                if word & mask == 0 {
+                    len = word_idx * Self::bits_per_word();
+                } else {
+                    break;
+                }
+            }
+            // Now find the highest set bit.
+            if len == 0 {
+                0
+            } else {
+                let word_idx = (len - 1) / Self::bits_per_word();
+                let word = self.words[word_idx];
+                let high_bit = usize::BITS as usize - word.leading_zeros() as usize;
+                word_idx * Self::bits_per_word() + high_bit
+            }
+        };
+
+        self.clear_unused_tail_bits();
+        self
     }
 }
 
 impl AddAssign for UsizeBitArray {
     fn add_assign(&mut self, rhs: Self) {
-        *self = self.clone() + rhs;
+        // No-clone: drive the addition in-place via the owned Add impl.
+        // We swap out self, add, then swap back to avoid cloning.
+        let lhs = core::mem::take(self);
+        *self = lhs + rhs;
     }
 }
 
@@ -202,14 +556,20 @@ impl Sub for UsizeBitArray {
             panic!("Underflow in UsizeBitArray subtraction");
         }
 
+        // Keep length as max of operand lengths (Sub is used as a fixed-width
+        // operation in several places; shrinking the length below the operand
+        // widths would break callers that rely on bit-position stability).
         self.length = max(self.length, rhs.length);
+        self.clear_unused_tail_bits();
         self
     }
 }
 
 impl SubAssign for UsizeBitArray {
     fn sub_assign(&mut self, rhs: Self) {
-        *self = self.clone() - rhs;
+        // No-clone: drive Sub in-place.
+        let lhs = core::mem::take(self);
+        *self = lhs - rhs;
     }
 }
 
@@ -217,16 +577,54 @@ impl Mul for UsizeBitArray {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let a = self.to_biguint();
-        let b = rhs.to_biguint();
-        let prod = a * b;
-        UsizeBitArray::from_biguint(&prod)
+        // Native schoolbook word-level multiplication — no BigUint round-trip.
+        // Uses u128 intermediates to avoid overflow when multiplying two usize words.
+        let a_words = self.used_words();
+        let b_words = rhs.used_words();
+
+        if a_words == 0 || b_words == 0 {
+            return UsizeBitArray::default();
+        }
+
+        let result_words = a_words + b_words;
+        let mut product = vec![0usize; result_words];
+
+        for i in 0..a_words {
+            let a = self.words[i] as u128;
+            let mut carry: u128 = 0;
+            for j in 0..b_words {
+                let b = rhs.words[j] as u128;
+                let cur = product[i + j] as u128;
+                let sum = a * b + cur + carry;
+                product[i + j] = sum as usize;
+                carry = sum >> (usize::BITS as u32);
+            }
+            if carry > 0 {
+                product[i + b_words] = product[i + b_words].wrapping_add(carry as usize);
+            }
+        }
+
+        // Compute tight result length from highest set bit.
+        let result_length = if let Some(idx) = product.iter().rposition(|&w| w != 0) {
+            idx * Self::bits_per_word() + Self::bits_per_word()
+                - product[idx].leading_zeros() as usize
+        } else {
+            0
+        };
+        let mut result = UsizeBitArray {
+            words: product,
+            length: result_length,
+        };
+        result.clear_unused_tail_bits();
+        result
     }
 }
 
 impl MulAssign for UsizeBitArray {
     fn mul_assign(&mut self, rhs: Self) {
-        *self = self.clone() * rhs;
+        // No-clone: drive Mul in-place.
+        let lhs = core::mem::take(self);
+        *self = lhs * rhs;
     }
 }
 
@@ -234,20 +632,146 @@ impl Div for UsizeBitArray {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
-        use num_bigint::BigUint;
         use num_traits::Zero;
+        assert!(
+            !rhs.to_biguint().is_zero(),
+            "division by zero in UsizeBitArray"
+        );
 
-        let a = self.to_biguint();
-        let b = rhs.to_biguint();
-        assert!(!b.is_zero(), "division by zero in UsizeBitArray");
-        let quot: BigUint = a / b;
-        UsizeBitArray::from_biguint(&quot)
+        let bits_per_word = Self::bits_per_word();
+
+        // S4 fast path: both operands fit in u128 (covers all FlexFloat mantissas).
+        let a_words = self.used_words();
+        let b_words = rhs.used_words();
+        if a_words <= 2 && b_words <= 2 {
+            let n = (self.words.get(1).copied().unwrap_or(0) as u128) << bits_per_word
+                | (self.words.get(0).copied().unwrap_or(0) as u128);
+            let d = (rhs.words.get(1).copied().unwrap_or(0) as u128) << bits_per_word
+                | (rhs.words.get(0).copied().unwrap_or(0) as u128);
+            let q = n / d;
+            if q == 0 {
+                return UsizeBitArray::default();
+            }
+            let hi = (q >> bits_per_word) as usize;
+            let lo = q as usize;
+            let (words, length) = if hi == 0 {
+                let len = bits_per_word - lo.leading_zeros() as usize;
+                (vec![lo], len)
+            } else {
+                let len = bits_per_word + (bits_per_word - hi.leading_zeros() as usize);
+                (vec![lo, hi], len)
+            };
+            return UsizeBitArray { words, length };
+        }
+
+        // Slow path: word-level binary long division.
+        // dividend / divisor — both > 2 words.
+        let dividend_bits = self.length;
+
+        // remainder starts empty (length 0).
+        let mut remainder = UsizeBitArray::default();
+        let mut quotient = UsizeBitArray::zeros(dividend_bits);
+
+        for i in (0..dividend_bits).rev() {
+            // Shift remainder left by 1 and bring in bit `i` of dividend.
+            let bit =
+                self.words.get(i / bits_per_word).copied().unwrap_or(0) >> (i % bits_per_word) & 1
+                    != 0;
+
+            // In-place left shift of remainder by 1 (equivalent to shift_grow(1))
+            // and set bit 0 to `bit`.
+            let rem_words = remainder.used_words();
+            if rem_words == 0 {
+                if bit {
+                    remainder.words.push(1);
+                    remainder.length = 1;
+                } else {
+                    remainder.length = 0;
+                }
+            } else {
+                // Extend storage if needed (top bit might carry out).
+                if remainder.words.len() < rem_words + 1 {
+                    remainder.words.push(0);
+                }
+                // Shift every word left by 1 (high-to-low to avoid aliasing).
+                for k in (1..=rem_words).rev() {
+                    remainder.words[k] =
+                        (remainder.words[k - 1] >> (bits_per_word - 1)) | (remainder.words[k] << 1);
+                }
+                remainder.words[0] = (remainder.words[0] << 1) | (bit as usize);
+
+                // Recompute length from highest set bit.
+                let top_word_idx = rem_words; // words[rem_words] may be non-zero
+                let actual_top = if remainder.words.get(top_word_idx).copied().unwrap_or(0) != 0 {
+                    top_word_idx
+                } else {
+                    // Find the real top
+                    let mut idx = rem_words;
+                    while idx > 0 && remainder.words[idx - 1] == 0 {
+                        idx -= 1;
+                    }
+                    idx.saturating_sub(1)
+                };
+                if remainder.words.get(actual_top).copied().unwrap_or(0) != 0 {
+                    remainder.length = actual_top * bits_per_word + bits_per_word
+                        - remainder.words[actual_top].leading_zeros() as usize;
+                } else {
+                    remainder.length = 0;
+                }
+            }
+
+            // If remainder >= rhs, subtract and set quotient bit.
+            // Compare word-by-word from most significant.
+            let rem_gte_rhs = {
+                let r_words = remainder.used_words();
+                let d_words = rhs.used_words();
+                if r_words != d_words {
+                    r_words > d_words
+                } else {
+                    let mut gte = true;
+                    for k in (0..r_words).rev() {
+                        let rw = remainder.words.get(k).copied().unwrap_or(0);
+                        let dw = rhs.words.get(k).copied().unwrap_or(0);
+                        if rw > dw {
+                            gte = true;
+                            break;
+                        }
+                        if rw < dw {
+                            gte = false;
+                            break;
+                        }
+                    }
+                    gte
+                }
+            };
+            if rem_gte_rhs {
+                remainder -= rhs.clone();
+                let word_idx = i / bits_per_word;
+                let bit_idx = i % bits_per_word;
+                if word_idx < quotient.words.len() {
+                    quotient.words[word_idx] |= 1usize << bit_idx;
+                }
+            }
+        }
+
+        quotient.clear_unused_tail_bits();
+        // Tighten quotient length.
+        if let Some(idx) = quotient.words.iter().rposition(|&w| w != 0) {
+            quotient.length =
+                idx * bits_per_word + bits_per_word - quotient.words[idx].leading_zeros() as usize;
+        } else {
+            quotient.length = 0;
+            quotient.words.clear();
+        }
+        quotient
     }
 }
 
 impl DivAssign for UsizeBitArray {
     fn div_assign(&mut self, rhs: Self) {
-        *self = self.clone() / rhs;
+        // No-clone: drive Div in-place.
+        let lhs = core::mem::take(self);
+        *self = lhs / rhs;
     }
 }
 
@@ -522,6 +1046,24 @@ mod tests {
             let range = bit_array.get_range(start..end).unwrap();
             assert_eq!(range.to_bits(), bits[start..end].to_vec());
         }
+    }
+
+    #[test]
+    fn test_add_one_in_place() {
+        let mut a = UsizeBitArray::zeros(4);
+        a.add_one_in_place();
+        assert_eq!(a.to_biguint(), num_bigint::BigUint::from(1u8));
+
+        let mut a = UsizeBitArray::from_bits(&[true, true, true]);
+        a.add_one_in_place();
+        assert_eq!(a.to_biguint(), num_bigint::BigUint::from(8u8));
+        assert_eq!(a.len(), 4);
+
+        let mut a = UsizeBitArray::ones(4);
+        let prev_len = a.len();
+        a.add_one_in_place();
+        assert_eq!(a.len(), prev_len + 1);
+        assert_eq!(a.to_biguint(), num_bigint::BigUint::from(16u8));
     }
 
     #[rstest]
@@ -998,11 +1540,9 @@ mod tests {
             if shift == 0 {
                 assert_eq!(shifted.to_bits(), bits);
             } else if shift > 0 {
-                assert!(
-                    shifted.to_bits()[..shift as usize]
-                        .iter()
-                        .all(|&b| b == fill)
-                );
+                assert!(shifted.to_bits()[..shift as usize]
+                    .iter()
+                    .all(|&b| b == fill));
                 assert_eq!(&shifted.to_bits()[shift as usize..], &bits[..]);
             } else {
                 assert!(shifted.to_bits()[len..].iter().all(|&b| b == fill));

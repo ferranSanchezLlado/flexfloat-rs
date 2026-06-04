@@ -7,20 +7,24 @@
 //! - [`BitArrayConversion`] - Converting BitArrays to other types
 //! - [`BitArrayAccess`] - Reading and querying BitArray contents
 //! - [`BitArrayManipulation`] - Modifying and transforming BitArrays
+//! - [`BitArrayArith`] - Bignum arithmetic (optional, for arithmetic-capable backends)
 //!
-//! The main [`BitArray`] trait combines all of these, providing a complete
-//! interface for bit array operations.
+//! The main [`BitArray`] trait combines construction, conversion, access,
+//! manipulation, and primitives without committing to arithmetic semantics.
+//! [`BitArrayArith`] extends [`BitArray`] for backends that also implement
+//! `Add + Sub + Mul + Div`.
 
 use core::fmt::Debug;
-use core::ops::{Add, Div, Mul, Sub};
 
 mod access;
+mod arith;
 mod construction;
 mod conversion;
 mod manipulation;
 pub(crate) mod rounding;
 
 pub use access::{BitArrayAccess, BitArrayMutAccess};
+pub use arith::BitArrayArith;
 pub use construction::BitArrayConstruction;
 pub use conversion::BitArrayConversion;
 pub use manipulation::BitArrayManipulation;
@@ -28,21 +32,18 @@ pub(crate) use rounding::{BitArrayRounding, ShiftRoundingInfo, ShiftRoundingResu
 
 /// Core trait for bit array implementations with little-endian byte ordering.
 ///
-/// This trait combines construction, conversion, access, and manipulation
-/// capabilities, along with standard arithmetic operations. It provides a
-/// unified interface for storing and manipulating sequences of bits with
-/// support for various numeric type conversions and bit operations.
+/// This trait combines construction, conversion, access, manipulation, and
+/// backend-primitive capabilities. It deliberately does **not** include bignum
+/// arithmetic — use [`BitArrayArith`] for that.
 ///
 /// ## Byte Order
 ///
 /// All implementations use **little-endian (LE)** byte order for consistency
 /// with common CPU architectures and IEEE 754 standards.
 ///
-/// ## Implementation Requirements
+/// ## Derivable bounds
 ///
-/// Implementors must provide efficient storage and access for bit sequences,
-/// with particular attention to memory usage and performance for common operations
-/// like indexing and range extraction.
+/// Implementors must also satisfy `Debug + Clone + Default + PartialEq + Eq`.
 ///
 /// # Examples
 ///
@@ -67,12 +68,12 @@ pub trait BitArray:
     + BitArrayConversion
     + BitArrayMutAccess
     + BitArrayManipulation
-    + Add<Output = Self>
-    + Sub<Output = Self>
-    + Mul<Output = Self>
-    + Div<Output = Self>
+    + crate::bitarray::backend::BitArrayPrimitives
     + Debug
     + Clone
+    + Default
+    + PartialEq
+    + Eq
 {
 }
 
@@ -82,23 +83,24 @@ impl<T> BitArray for T where
         + BitArrayConversion
         + BitArrayMutAccess
         + BitArrayManipulation
-        + Add<Output = Self>
-        + Sub<Output = Self>
-        + Mul<Output = Self>
-        + Div<Output = Self>
+        + crate::bitarray::backend::BitArrayPrimitives
         + Debug
         + Clone
+        + Default
+        + PartialEq
+        + Eq
 {
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use core::ops::{Add, Div, Mul, Sub};
+    use core::ops::Range;
 
     use super::*;
     use crate::BoolBitArray;
+    use crate::bitarray::backend::BitArrayPrimitives;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub struct BitArrayTest {
         bits: Vec<bool>,
     }
@@ -138,16 +140,8 @@ pub(crate) mod tests {
         fn get(&self, index: usize) -> Option<bool> {
             self.bits.get(index).cloned()
         }
-    }
 
-    impl BitArrayMutAccess for BitArrayTest {
-        type BitMut<'a> = &'a mut bool;
-
-        fn get_mut(&mut self, index: usize) -> Option<&mut bool> {
-            self.bits.get_mut(index)
-        }
-
-        fn get_range(&self, range: core::ops::Range<usize>) -> Option<Self>
+        fn get_range(&self, range: Range<usize>) -> Option<Self>
         where
             Self: Sized,
         {
@@ -160,32 +154,51 @@ pub(crate) mod tests {
         }
     }
 
-    impl BitArrayManipulation for BitArrayTest {
+    impl BitArrayMutAccess for BitArrayTest {
+        type BitMut<'a> = &'a mut bool;
+
+        fn get_mut(&mut self, index: usize) -> Option<&mut bool> {
+            self.bits.get_mut(index)
+        }
+    }
+
+    impl BitArrayPrimitives for BitArrayTest {
         fn append_bool(&mut self, value: bool) {
             self.bits.push(value);
         }
 
+        fn fill_range(&mut self, range: core::ops::Range<usize>, value: bool) {
+            for i in range {
+                if i < self.bits.len() {
+                    self.bits[i] = value;
+                }
+            }
+        }
+
+        fn copy_within_bits(&mut self, src: core::ops::Range<usize>, dst_start: usize) {
+            let src_bits: Vec<bool> = self.bits[src].to_vec();
+            for (i, b) in src_bits.into_iter().enumerate() {
+                let dst = dst_start + i;
+                if dst < self.bits.len() {
+                    self.bits[dst] = b;
+                }
+            }
+        }
+
+        fn extend_with(&mut self, count: usize, value: bool) {
+            self.bits.extend(core::iter::repeat_n(value, count));
+        }
+
+        fn truncate_in_place(&mut self, n_bits: usize) {
+            self.bits.truncate(n_bits);
+        }
+    }
+
+    impl BitArrayManipulation for BitArrayTest {
         fn reset(self) -> Self {
             Self {
                 bits: vec![false; self.bits.len()],
             }
         }
     }
-
-    macro_rules! empty_bitarry {
-        ([$(( $trait:ident, $method:ident )),*]) => {
-            $(
-                impl $trait for BitArrayTest {
-                    type Output = Self;
-
-                    fn $method(self, _rhs: Self) -> Self::Output {
-                        unimplemented!()
-                    }
-                }
-            )*
-
-        };
-    }
-
-    empty_bitarry!([(Add, add), (Sub, sub), (Mul, mul), (Div, div)]);
 }

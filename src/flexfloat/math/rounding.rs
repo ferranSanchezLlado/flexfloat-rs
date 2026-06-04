@@ -8,7 +8,7 @@
 //! - `fract`: Extract fractional part
 
 use crate::flexfloat::consts;
-use crate::{BitArray, FlexFloat};
+use crate::{BitArray, BitArrayArith, FlexFloat};
 
 /// Rounds the value to the nearest integer using round half away from zero.
 ///
@@ -37,7 +37,7 @@ use crate::{BitArray, FlexFloat};
 /// let rounded_y = math::round(y);
 /// assert_eq!(rounded_y, FlexFloat::from(-2.0));
 /// ```
-pub fn round<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn round<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     // Handle special cases: NaN, Infinity
     if value.is_nan() || value.is_infinite() {
         value
@@ -203,7 +203,7 @@ pub fn trunc<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let fractional_y = math::fract(y);
 /// assert_eq!(fractional_y, FlexFloat::from(-0.75));
 /// ```
-pub fn fract<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn fract<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() {
         return value;
     }
@@ -214,7 +214,7 @@ pub fn fract<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     value.clone() - trunc(value)
 }
 
-impl<B: BitArray> FlexFloat<B> {
+impl<B: BitArrayArith> FlexFloat<B> {
     /// Rounds the value to the nearest integer using round half away from zero.
     ///
     /// This method rounds the floating-point value to the nearest integer.

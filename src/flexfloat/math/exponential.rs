@@ -11,7 +11,7 @@ use core::f64;
 
 use crate::flexfloat::{consts, grow_exponent};
 use crate::prelude::BitArrayConversion;
-use crate::{BitArray, FlexFloat};
+use crate::{BitArray, BitArrayArith, FlexFloat};
 
 /// Returns the exponential function of the value (e^x).
 ///
@@ -44,7 +44,7 @@ use crate::{BitArray, FlexFloat};
 ///
 /// assert_ff_almost_eq!(growth_factor, FlexFloat::from(4.4816890703380645));
 /// ```
-pub fn exp<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn exp<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_infinite() || value.is_nan() {
         if value.is_infinite() && value.sign {
             return FlexFloat::new_zero();
@@ -99,7 +99,7 @@ pub fn exp<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     fast_exp2(k) * (numerator / denominator)
 }
 
-pub fn exp2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn exp2<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() {
         return value;
     }
@@ -173,7 +173,7 @@ pub(crate) fn fast_exp2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 ///
 /// assert_ff_almost_eq!(continuous_rate, FlexFloat::from(5.0));
 /// ```
-pub fn ln<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn ln<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     // Handle special cases: negative numbers, zero, NaN, Infinity
     if value.is_nan() || value.is_infinite() {
         return value;
@@ -260,7 +260,7 @@ pub fn ln<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let digits = math::log(sample_count, &base);
 /// assert_ff_almost_eq!(digits, FlexFloat::from(3.0));
 /// ```
-pub fn log<B: BitArray, B2: BitArrayConversion>(
+pub fn log<B: BitArrayArith, B2: BitArrayConversion>(
     value: FlexFloat<B>,
     base: &FlexFloat<B2>,
 ) -> FlexFloat<B> {
@@ -304,7 +304,7 @@ pub fn log<B: BitArray, B2: BitArrayConversion>(
 /// let bits = math::log2(buffer_size);
 /// assert_ff_almost_eq!(bits, FlexFloat::from(10.0));
 /// ```
-pub fn log2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn log2<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     ln(value) / &consts::LN_2
 }
 
@@ -331,11 +331,11 @@ pub fn log2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let order_of_magnitude = math::log10(population);
 /// assert_ff_almost_eq!(order_of_magnitude, FlexFloat::from(6.0));
 /// ```
-pub fn log10<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn log10<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     ln(value) / &consts::LN_10
 }
 
-pub fn exp_m1<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn exp_m1<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() || value.is_infinite() {
         return value.exp() - FlexFloat::<B>::from_f64(1.0);
     }
@@ -353,7 +353,7 @@ pub fn exp_m1<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     }
 }
 
-pub fn ln_1p<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn ln_1p<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() {
         return value;
     }
@@ -382,7 +382,7 @@ pub fn ln_1p<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     }
 }
 
-impl<B: BitArray> FlexFloat<B> {
+impl<B: BitArrayArith> FlexFloat<B> {
     /// Returns the exponential function of the value (e^x).
     ///
     /// This method computes Euler's number (e) raised to the power of the input value.

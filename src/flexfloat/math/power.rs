@@ -6,7 +6,7 @@
 //! - `cbrt`: Cube root
 
 use crate::{
-    BitArray, FlexFloat,
+    BitArrayArith, FlexFloat,
     flexfloat::consts,
     math::{exp, fract, ln},
     prelude::BitArrayConversion,
@@ -36,7 +36,7 @@ use crate::{
 /// let result = math::pow(base, &exponent);
 /// assert_eq!(result, FlexFloat::from(2.0));
 /// ```
-pub fn pow<B: BitArray, B2: BitArrayConversion>(
+pub fn pow<B: BitArrayArith, B2: BitArrayConversion>(
     base: FlexFloat<B>,
     exponent: &FlexFloat<B2>,
 ) -> FlexFloat<B> {
@@ -123,7 +123,7 @@ pub fn pow<B: BitArray, B2: BitArrayConversion>(
 /// let result = math::sqrt(x);
 /// assert_eq!(result, FlexFloat::from(1.0));
 /// ```
-pub fn sqrt<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn sqrt<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     pow(value, &consts::HALF)
 }
 
@@ -147,7 +147,7 @@ pub fn sqrt<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::cbrt(x);
 /// assert_eq!(result, FlexFloat::from(1.0));
 /// ```
-pub fn cbrt<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn cbrt<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     // Cube root is defined for negative numbers: cbrt(-x) = -cbrt(x)
     if value.sign {
         -pow(value.abs(), &consts::THIRD)
@@ -157,11 +157,11 @@ pub fn cbrt<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     // pow(value, &consts::THIRD)
 }
 
-pub fn hypot<B: BitArray>(x: FlexFloat<B>, y: &FlexFloat<B>) -> FlexFloat<B> {
+pub fn hypot<B: BitArrayArith>(x: FlexFloat<B>, y: &FlexFloat<B>) -> FlexFloat<B> {
     sqrt(x.clone() * x + y.clone() * y.clone())
 }
 
-impl<B: BitArray> FlexFloat<B> {
+impl<B: BitArrayArith> FlexFloat<B> {
     /// Returns the value raised to the power of the exponent.
     ///
     /// This method computes `self^exponent`.

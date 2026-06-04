@@ -7,7 +7,7 @@
 //! - `to_degrees`: Convert radians to degrees
 //! - `to_radians`: Convert degrees to radians
 
-use crate::{BitArray, FlexFloat, flexfloat::consts};
+use crate::{BitArray, BitArrayArith, FlexFloat, flexfloat::consts};
 
 /// Returns the sign of the value as -1, 0, or 1.
 ///
@@ -95,7 +95,7 @@ pub fn copysign<B: BitArray>(value: FlexFloat<B>, sign: FlexFloat<B>) -> FlexFlo
 /// let result = math::recip(x);
 /// assert_eq!(result, FlexFloat::from(0.25));
 /// ```
-pub fn recip<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn recip<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     FlexFloat::from_f64(1.0) / value
 }
 
@@ -119,7 +119,7 @@ pub fn recip<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let degrees = math::to_degrees(turn);
 /// assert_ff_almost_eq!(degrees, FlexFloat::from(90.0));
 /// ```
-pub fn to_degrees<B: BitArray>(radians: FlexFloat<B>) -> FlexFloat<B> {
+pub fn to_degrees<B: BitArrayArith>(radians: FlexFloat<B>) -> FlexFloat<B> {
     radians * &consts::DEG_PER_RAD
 }
 
@@ -143,7 +143,7 @@ pub fn to_degrees<B: BitArray>(radians: FlexFloat<B>) -> FlexFloat<B> {
 /// let radians = math::to_radians(degrees);
 /// assert_ff_almost_eq!(radians, FlexFloat::from(core::f64::consts::PI / 4.0));
 /// ```
-pub fn to_radians<B: BitArray>(degrees: FlexFloat<B>) -> FlexFloat<B> {
+pub fn to_radians<B: BitArrayArith>(degrees: FlexFloat<B>) -> FlexFloat<B> {
     degrees * &consts::RAD_PER_DEG
 }
 
@@ -188,7 +188,9 @@ impl<B: BitArray> FlexFloat<B> {
     pub fn copysign(self, sign: Self) -> Self {
         copysign(self, sign)
     }
+}
 
+impl<B: BitArrayArith> FlexFloat<B> {
     /// Returns the reciprocal (1/x) of the value.
     ///
     /// This method computes `1 / self`.

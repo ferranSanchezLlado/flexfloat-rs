@@ -58,6 +58,7 @@ use core::str::FromStr;
 use num_bigint::BigInt;
 
 use crate::bitarray::static_boolean_array::StaticBoolArray;
+use crate::bitarray::traits::BitArrayRounding;
 use crate::bitarray::{BitArray, BitArrayAccess, BitArrayConversion, DefaultBitArray};
 
 pub mod arithmetic;
@@ -768,17 +769,17 @@ pub(crate) fn truncate_fraction<B: BitArray>(fraction: B, size: usize) -> Rounde
 
             let rounding = guard && (lsb || rest);
 
-            let truncated = fraction.shift_fixed(-shift).truncate(size);
+            let mut truncated = fraction.shift_fixed(-shift).truncate(size);
             if rounding {
-                let rounded = truncated + B::from_bits(&[true]);
-                if rounded.len() > size {
+                truncated.add_one_in_place();
+                if truncated.len() > size {
                     RoundedResult {
-                        fraction: rounded.shift_fixed(1).truncate(size),
+                        fraction: truncated.shift_fixed(1).truncate(size),
                         carry: true,
                     }
                 } else {
                     RoundedResult {
-                        fraction: rounded,
+                        fraction: truncated,
                         carry: false,
                     }
                 }

@@ -9,6 +9,8 @@
 //! returning both the quotient and the discarded low bits in the form
 //! of guard / round / sticky.
 
+use crate::bitarray::backend::BitArrayPrimitives;
+use crate::bitarray::traits::BitArrayMutAccess;
 use crate::bitarray::traits::access::BitArrayAccess;
 use crate::bitarray::traits::manipulation::BitArrayManipulation;
 
@@ -61,8 +63,27 @@ pub(crate) struct ShiftRoundingResult<B> {
 }
 
 /// Internal trait providing rounding-aware bit operations on top of
-/// `BitArrayManipulation`.
-pub(crate) trait BitArrayRounding: BitArrayManipulation + BitArrayAccess {
+/// the regular bit-array traits.
+pub(crate) trait BitArrayRounding:
+    BitArrayManipulation + BitArrayAccess + BitArrayMutAccess + BitArrayPrimitives
+{
+    /// Adds 1 to the value in-place, growing by one bit on overflow.
+    fn add_one_in_place(&mut self) {
+        for i in 0..self.len() {
+            let mut bit = self
+                .get_mut(i)
+                .expect("bit index must remain valid while incrementing");
+            if *bit {
+                *bit = false;
+            } else {
+                *bit = true;
+                return;
+            }
+        }
+
+        self.append_bool(true);
+    }
+
     /// Right-shift by `amount` positions, returning the shifted value and
     /// guard/round/sticky info for the bits that were dropped.
     fn shift_right_rounded(self, amount: usize) -> ShiftRoundingResult<Self>
@@ -72,7 +93,7 @@ pub(crate) trait BitArrayRounding: BitArrayManipulation + BitArrayAccess {
 
 impl<T> BitArrayRounding for T
 where
-    T: BitArrayManipulation + BitArrayAccess + Sized,
+    T: BitArrayManipulation + BitArrayAccess + BitArrayMutAccess + BitArrayPrimitives + Sized,
 {
     fn shift_right_rounded(self, amount: usize) -> ShiftRoundingResult<Self> {
         if amount == 0 {
@@ -94,8 +115,7 @@ where
             false
         };
         let sticky = if amount >= 3 {
-            let take = (amount - 2).min(len);
-            self.iter_bits().take(take).any(|b| b)
+            self.any_set_below((amount - 2).min(len))
         } else {
             false
         };

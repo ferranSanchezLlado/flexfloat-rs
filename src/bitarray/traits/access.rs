@@ -45,6 +45,29 @@ pub trait BitArrayAccess {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Extracts a sub-range of bits as a new BitArray.
+    ///
+    /// # Arguments
+    ///
+    /// * `range` - Range of bit indices to extract
+    ///
+    /// # Returns
+    ///
+    /// Some(BitArray) containing the specified range, None if range is invalid
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::prelude::*;
+    ///
+    /// let bits = BoolBitArray::from_bits(&[true, false, true, false]);
+    /// let sub = bits.get_range(1..3).unwrap();
+    /// assert_eq!(sub.to_bits(), vec![false, true]);
+    /// ```
+    fn get_range(&self, range: Range<usize>) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 pub trait BitArrayMutAccess: BitArrayAccess {
@@ -72,29 +95,6 @@ pub trait BitArrayMutAccess: BitArrayAccess {
     /// `Some(handle)` if the index is valid, `None` otherwise. The returned
     /// handle dereferences to `bool` via `Deref`/`DerefMut`.
     fn get_mut(&mut self, index: usize) -> Option<Self::BitMut<'_>>;
-
-    /// Extracts a sub-range of bits as a new BitArray.
-    ///
-    /// # Arguments
-    ///
-    /// * `range` - Range of bit indices to extract
-    ///
-    /// # Returns
-    ///
-    /// Some(BitArray) containing the specified range, None if range is invalid
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use flexfloat::prelude::*;
-    ///
-    /// let bits = BoolBitArray::from_bits(&[true, false, true, false]);
-    /// let sub = bits.get_range(1..3).unwrap();
-    /// assert_eq!(sub.to_bits(), vec![false, true]);
-    /// ```
-    fn get_range(&self, range: Range<usize>) -> Option<Self>
-    where
-        Self: Sized;
 }
 
 #[cfg(test)]

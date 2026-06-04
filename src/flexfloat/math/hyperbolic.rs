@@ -5,7 +5,7 @@
 //! - `cosh`: Hyperbolic cosine function
 //! - `tanh`: Hyperbolic tangent function
 
-use crate::{BitArray, FlexFloat, flexfloat::consts};
+use crate::{BitArrayArith, FlexFloat, flexfloat::consts};
 
 /// Returns the hyperbolic sine of the value.
 ///
@@ -27,7 +27,7 @@ use crate::{BitArray, FlexFloat, flexfloat::consts};
 /// let result = math::sinh(x);
 /// assert_eq!(result, FlexFloat::from(0.0));
 /// ```
-pub fn sinh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn sinh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     (value.clone().exp() - (-value).exp()) / &consts::TWO
 }
 
@@ -51,7 +51,7 @@ pub fn sinh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::cosh(x);
 /// assert_eq!(result, FlexFloat::from(1.0));
 /// ```
-pub fn cosh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn cosh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     (value.clone().exp() + (-value).exp()) / &consts::TWO
 }
 
@@ -75,11 +75,11 @@ pub fn cosh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::tanh(x);
 /// assert_eq!(result, FlexFloat::from(0.0));
 /// ```
-pub fn tanh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn tanh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     sinh(value.clone()) / cosh(value)
 }
 
-pub fn asinh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn asinh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() || value.is_infinite() || value.is_zero() {
         return value;
     }
@@ -94,7 +94,7 @@ pub fn asinh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.sign { -result } else { result }
 }
 
-pub fn acosh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn acosh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() {
         return value;
     }
@@ -115,7 +115,7 @@ pub fn acosh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     }
 }
 
-pub fn atanh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn atanh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     if value.is_nan() {
         return value;
     }
@@ -132,7 +132,7 @@ pub fn atanh<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
     ((one.clone() + value.clone()).ln() - (one - value).ln()) / &consts::TWO
 }
 
-impl<B: BitArray> FlexFloat<B> {
+impl<B: BitArrayArith> FlexFloat<B> {
     /// Returns the hyperbolic sine of the value.
     ///
     /// This method computes `sinh(self)`.

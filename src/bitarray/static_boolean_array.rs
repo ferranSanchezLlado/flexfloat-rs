@@ -66,6 +66,27 @@ impl BitArrayAccess for StaticBoolArray {
     fn get(&self, index: usize) -> Option<bool> {
         self.bits().get(index).copied()
     }
+
+    fn get_range(&self, range: Range<usize>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        if range.start > range.end || range.end > self.size {
+            return None;
+        }
+
+        let mut bits = [false; 56];
+        let mut i = 0;
+        while i < range.end - range.start {
+            bits[i] = self.bits[range.start + i];
+            i += 1;
+        }
+
+        Some(Self {
+            bits,
+            size: range.end - range.start,
+        })
+    }
 }
 
 impl Index<usize> for StaticBoolArray {

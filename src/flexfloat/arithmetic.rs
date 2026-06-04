@@ -53,7 +53,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
 use crate::bitarray::traits::{BitArrayRounding, ShiftRoundingInfo, ShiftRoundingResult};
-use crate::bitarray::{BitArray, BitArrayConversion};
+use crate::bitarray::{BitArray, BitArrayArith, BitArrayConversion};
 use crate::flexfloat::math::trunc;
 use crate::flexfloat::{FlexFloat, grow_exponent};
 
@@ -114,15 +114,14 @@ fn build_finite_result<B: BitArray>(
         let mut fraction = value.truncate(52);
         let result_lsb = fraction.get(0).unwrap_or(false);
         if info.should_round_up(result_lsb) {
-            let bumped = fraction.clone() + B::from_bits(&[true]);
-            if bumped.len() > 52 {
+            fraction.add_one_in_place();
+            if fraction.len() > 52 {
                 return FlexFloat {
                     sign,
                     exponent: B::from_biguint_fixed(&BigUint::one(), 11),
                     fraction: B::zeros(52),
                 };
             }
-            fraction = bumped;
         }
 
         return if fraction.iter_bits().any(|b| b) {
@@ -177,7 +176,9 @@ impl<B: BitArray> FlexFloat<B> {
             fraction: self.fraction.clone(),
         }
     }
+}
 
+impl<B: BitArrayArith> FlexFloat<B> {
     pub fn rem_euclid<B2: BitArrayConversion>(self, rhs: &FlexFloat<B2>) -> Self {
         let rhs_converted: FlexFloat<B> = rhs.convert_to();
         let result = self.clone() % rhs;
@@ -210,7 +211,7 @@ impl<B: BitArray> FlexFloat<B> {
     }
 }
 
-impl<B: BitArray, B2: BitArrayConversion> Rem<&FlexFloat<B2>> for FlexFloat<B> {
+impl<B: BitArrayArith, B2: BitArrayConversion> Rem<&FlexFloat<B2>> for FlexFloat<B> {
     type Output = Self;
 
     fn rem(self, rhs: &FlexFloat<B2>) -> Self::Output {
@@ -261,7 +262,7 @@ impl<B: BitArray> Neg for FlexFloat<B> {
     }
 }
 
-fn add<B: BitArray>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
+fn add<B: BitArrayArith>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
     if lhs.sign != rhs.sign {
         sub(lhs, -rhs);
         return;
@@ -347,12 +348,10 @@ fn add<B: BitArray>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
 
     let result_lsb = mantissa_result.get(0).unwrap_or(false);
     if rounding_info.should_round_up(result_lsb) {
-        let bumped = mantissa_result + B::from_bits(&[true]);
-        if bumped.len() > 53 {
-            mantissa_result = bumped.shift_fixed(1).truncate(53);
+        mantissa_result.add_one_in_place();
+        if mantissa_result.len() > 53 {
+            mantissa_result = mantissa_result.shift_fixed(1).truncate(53);
             exp_lhs += 1_u8;
-        } else {
-            mantissa_result = bumped;
         }
     }
 
@@ -366,7 +365,7 @@ fn add<B: BitArray>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
     );
 }
 
-fn sub<B: BitArray>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
+fn sub<B: BitArrayArith>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
     if lhs.sign != rhs.sign {
         // a - (-b) == a + b
         add(lhs, -rhs);
@@ -450,12 +449,11 @@ fn sub<B: BitArray>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
     {
         let result_lsb = mantissa_result.get(0).unwrap_or(false);
         if sub_align_info.should_round_up(result_lsb) {
-            let bumped = mantissa_result.clone() + B::from_bits(&[true]);
-            if bumped.len() > mantissa_result.len() {
-                mantissa_result = bumped.shift_fixed(1).truncate(mantissa_result.len());
+            let mantissa_len = mantissa_result.len();
+            mantissa_result.add_one_in_place();
+            if mantissa_result.len() > mantissa_len {
+                mantissa_result = mantissa_result.shift_fixed(1).truncate(mantissa_len);
                 exp_lhs += 1_u8;
-            } else {
-                mantissa_result = bumped;
             }
         }
     }
@@ -483,7 +481,7 @@ fn sub<B: BitArray>(lhs: &mut FlexFloat<B>, mut rhs: FlexFloat<B>) {
 /// let total = distance + extra;
 /// assert_ff_almost_eq!(total, FlexFloat::from(124.75));
 /// ```
-impl<B: BitArray, B2: BitArrayConversion> Add<&FlexFloat<B2>> for FlexFloat<B> {
+impl<B: BitArrayArith, B2: BitArrayConversion> Add<&FlexFloat<B2>> for FlexFloat<B> {
     type Output = Self;
 
     fn add(mut self, rhs: &FlexFloat<B2>) -> Self::Output {
@@ -507,7 +505,7 @@ impl<B: BitArray, B2: BitArrayConversion> Add<&FlexFloat<B2>> for FlexFloat<B> {
 /// let remaining = balance - withdrawal;
 /// assert_ff_almost_eq!(remaining, FlexFloat::from(230.05));
 /// ```
-impl<B: BitArray, B2: BitArrayConversion> Sub<&FlexFloat<B2>> for FlexFloat<B> {
+impl<B: BitArrayArith, B2: BitArrayConversion> Sub<&FlexFloat<B2>> for FlexFloat<B> {
     type Output = Self;
 
     fn sub(mut self, rhs: &FlexFloat<B2>) -> Self::Output {
@@ -530,7 +528,7 @@ impl<B: BitArray, B2: BitArrayConversion> Sub<&FlexFloat<B2>> for FlexFloat<B> {
 /// let area = width * height;
 /// assert_ff_almost_eq!(area, FlexFloat::from(93.5));
 /// ```
-impl<B: BitArray, B2: BitArrayConversion> Mul<&FlexFloat<B2>> for FlexFloat<B> {
+impl<B: BitArrayArith, B2: BitArrayConversion> Mul<&FlexFloat<B2>> for FlexFloat<B> {
     type Output = Self;
 
     fn mul(self, rhs: &FlexFloat<B2>) -> Self::Output {
@@ -579,12 +577,10 @@ impl<B: BitArray, B2: BitArrayConversion> Mul<&FlexFloat<B2>> for FlexFloat<B> {
 
         let result_lsb = mant_res_53.get(0).unwrap_or(false);
         if mul_round_info.should_round_up(result_lsb) {
-            let bumped = mant_res_53.clone() + B::from_bits(&[true]);
-            if bumped.len() > 53 {
-                mant_res_53 = bumped.shift_fixed(1).truncate(53);
+            mant_res_53.add_one_in_place();
+            if mant_res_53.len() > 53 {
+                mant_res_53 = mant_res_53.shift_fixed(1).truncate(53);
                 exp_res += 1_u8;
-            } else {
-                mant_res_53 = bumped;
             }
         }
 
@@ -608,7 +604,7 @@ impl<B: BitArray, B2: BitArrayConversion> Mul<&FlexFloat<B2>> for FlexFloat<B> {
 /// let share = budget / people;
 /// assert_ff_almost_eq!(share, FlexFloat::from(24.0));
 /// ```
-impl<B: BitArray, B2: BitArrayConversion> Div<&FlexFloat<B2>> for FlexFloat<B> {
+impl<B: BitArrayArith, B2: BitArrayConversion> Div<&FlexFloat<B2>> for FlexFloat<B> {
     type Output = Self;
 
     fn div(self, rhs: &FlexFloat<B2>) -> Self::Output {
@@ -678,12 +674,10 @@ impl<B: BitArray, B2: BitArrayConversion> Div<&FlexFloat<B2>> for FlexFloat<B> {
 
         let result_lsb = mant_res_final.get(0).unwrap_or(false);
         if div_round_info.should_round_up(result_lsb) {
-            let bumped = mant_res_final.clone() + B::from_bits(&[true]);
-            if bumped.len() > 53 {
-                mant_res_final = bumped.shift_fixed(1).truncate(53);
+            mant_res_final.add_one_in_place();
+            if mant_res_final.len() > 53 {
+                mant_res_final = mant_res_final.shift_fixed(1).truncate(53);
                 exp_res += 1_u8;
-            } else {
-                mant_res_final = bumped;
             }
         }
 
@@ -697,7 +691,7 @@ impl<B: BitArray, B2: BitArrayConversion> Div<&FlexFloat<B2>> for FlexFloat<B> {
 /// Macro to implement all combinations of binary ops for FlexFloat between references and owned values
 macro_rules! impl_flexfloat_binop_refs {
     ($trait:ident, $method:ident) => {
-        impl<B: BitArray, B2: BitArrayConversion> $trait<FlexFloat<B2>> for FlexFloat<B> {
+        impl<B: BitArrayArith, B2: BitArrayConversion> $trait<FlexFloat<B2>> for FlexFloat<B> {
             type Output = Self;
 
             fn $method(self, rhs: FlexFloat<B2>) -> Self::Output {
@@ -705,7 +699,7 @@ macro_rules! impl_flexfloat_binop_refs {
             }
         }
 
-        impl<B: BitArray, B2: BitArrayConversion> $trait<&FlexFloat<B2>> for &FlexFloat<B> {
+        impl<B: BitArrayArith, B2: BitArrayConversion> $trait<&FlexFloat<B2>> for &FlexFloat<B> {
             type Output = FlexFloat<B>;
 
             fn $method(self, rhs: &FlexFloat<B2>) -> Self::Output {
@@ -713,7 +707,7 @@ macro_rules! impl_flexfloat_binop_refs {
             }
         }
 
-        impl<B: BitArray, B2: BitArrayConversion> $trait<FlexFloat<B2>> for &FlexFloat<B> {
+        impl<B: BitArrayArith, B2: BitArrayConversion> $trait<FlexFloat<B2>> for &FlexFloat<B> {
             type Output = FlexFloat<B>;
 
             fn $method(self, rhs: FlexFloat<B2>) -> Self::Output {
@@ -732,13 +726,13 @@ impl_flexfloat_binop_refs!(Rem, rem);
 // Macro to implement all combinations of binary ops assign for FlexFloat between references and owned values
 macro_rules! impl_flexfloat_binop_assign_refs {
     ($trait:ident, $method:ident, $op:ident) => {
-        impl<B: BitArray, B2: BitArrayConversion> $trait<FlexFloat<B2>> for FlexFloat<B> {
+        impl<B: BitArrayArith, B2: BitArrayConversion> $trait<FlexFloat<B2>> for FlexFloat<B> {
             fn $method(&mut self, rhs: FlexFloat<B2>) {
                 *self = self.clone().$op(&rhs);
             }
         }
 
-        impl<B: BitArray, B2: BitArrayConversion> $trait<&FlexFloat<B2>> for FlexFloat<B> {
+        impl<B: BitArrayArith, B2: BitArrayConversion> $trait<&FlexFloat<B2>> for FlexFloat<B> {
             fn $method(&mut self, rhs: &FlexFloat<B2>) {
                 *self = self.clone().$op(rhs);
             }

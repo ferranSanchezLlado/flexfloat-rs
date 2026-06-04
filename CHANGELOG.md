@@ -6,6 +6,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+- Refactored `bitarray` into a layered API: `BitArray` now excludes arithmetic, `BitArrayArith` covers `Add`/`Sub`/`Mul`/`Div`, and backend-author primitives moved under `bitarray::backend`.
+- Moved `get_range` onto `BitArrayAccess`, tightened `BitArray` implementor requirements to `Default + PartialEq + Eq`, and updated shipped backends to the new backend-primitives surface.
+- Switched internal rounding paths to in-place increment support, which removes the old `+ B::from_bits(&[true])` round-up pattern in `flexfloat` arithmetic.
 - Prepared release-readiness metadata for the first stable release.
 - Added an explicit MSRV policy and CI validation.
 - Added missing repository policy and packaging files.

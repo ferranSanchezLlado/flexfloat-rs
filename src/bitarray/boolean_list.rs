@@ -41,6 +41,7 @@ use core::cmp::max;
 use core::ops::{Add, Div, Index, IndexMut, Mul, Range, Sub};
 use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
 
+use crate::bitarray::backend::BitArrayPrimitives;
 use crate::bitarray::traits::*;
 
 /// A BitArray implementation using `Vec<bool>` for bit storage.
@@ -59,9 +60,15 @@ use crate::bitarray::traits::*;
 /// BoolBitArray is not thread-safe by default. Wrap in appropriate synchronization
 /// primitives when sharing across threads.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoolBitArray {
     pub(crate) bits: Vec<bool>,
+}
+
+impl Default for BoolBitArray {
+    fn default() -> Self {
+        Self { bits: Vec::new() }
+    }
 }
 
 impl BitArrayConstruction for BoolBitArray {
@@ -148,14 +155,6 @@ impl BitArrayAccess for BoolBitArray {
     fn get(&self, index: usize) -> Option<bool> {
         self.bits.get(index).copied()
     }
-}
-
-impl BitArrayMutAccess for BoolBitArray {
-    type BitMut<'a> = &'a mut bool;
-
-    fn get_mut(&mut self, index: usize) -> Option<&mut bool> {
-        self.bits.get_mut(index)
-    }
 
     fn get_range(&self, range: Range<usize>) -> Option<Self>
     where
@@ -168,40 +167,70 @@ impl BitArrayMutAccess for BoolBitArray {
     }
 }
 
-impl BitArrayManipulation for BoolBitArray {
+impl BitArrayMutAccess for BoolBitArray {
+    type BitMut<'a> = &'a mut bool;
+
+    fn get_mut(&mut self, index: usize) -> Option<&mut bool> {
+        self.bits.get_mut(index)
+    }
+}
+
+impl BitArrayPrimitives for BoolBitArray {
     fn append_bool(&mut self, value: bool) {
         self.bits.push(value);
     }
 
-    fn truncate(mut self, n_bits: usize) -> Self
-    where
-        Self: Sized,
-    {
-        self.bits.truncate(n_bits);
-        self
+    fn fill_range(&mut self, range: Range<usize>, value: bool) {
+        for i in range {
+            if i < self.bits.len() {
+                self.bits[i] = value;
+            }
+        }
     }
 
+    fn copy_within_bits(&mut self, src: Range<usize>, dst_start: usize) {
+        let src_bits: Vec<bool> = self.bits[src].to_vec();
+        for (i, b) in src_bits.into_iter().enumerate() {
+            let dst = dst_start + i;
+            if dst < self.bits.len() {
+                self.bits[dst] = b;
+            }
+        }
+    }
+
+    fn extend_with(&mut self, count: usize, value: bool) {
+        self.bits.extend(core::iter::repeat_n(value, count));
+    }
+
+    fn truncate_in_place(&mut self, n_bits: usize) {
+        self.bits.truncate(n_bits);
+    }
+
+    fn any_set_below(&self, bit_index: usize) -> bool {
+        let take = bit_index.min(self.bits.len());
+        self.bits[..take].iter().any(|&b| b)
+    }
+}
+
+impl BitArrayManipulation for BoolBitArray {
     fn shift_grow_with_fill(mut self, shift: isize, fill: bool) -> Self {
         if shift == 0 {
             return self;
         }
 
         if shift < 0 {
-            return self.append_repeated(fill, shift.unsigned_abs());
+            // Negative shift: append fill bits at the high end.
+            self.bits
+                .extend(core::iter::repeat_n(fill, shift.unsigned_abs()));
+            return self;
         }
 
         let shift_abs = shift as usize;
+        // Positive shift: existing bits move to higher indices; prepend fill.
+        self.bits.reserve(shift_abs);
         self.bits.extend(core::iter::repeat_n(false, shift_abs));
-
-        // Move bits to the right
-        for i in (0..self.len() - shift_abs).rev() {
-            self.bits[i + shift_abs] = self.bits[i];
-        }
-
-        // Fill the beginning with the fill value
-        for i in 0..shift_abs {
-            self.bits[i] = fill;
-        }
+        self.bits.rotate_right(shift_abs);
+        self.bits[..shift_abs].fill(fill);
         self
     }
 
@@ -434,30 +463,69 @@ impl BoolBitArray {
             return (self.clone(), Self::zeros(1));
         }
 
-        // Binary long division algorithm
+        let divisor_len = divisor.bits.len();
         let dividend_bits = self.bits.len();
         let mut quotient = Self::zeros(dividend_bits);
-        let mut remainder = Self::zeros(dividend_bits);
+
+        // Use a pre-allocated Vec with a logical `head` offset so that
+        // "shift left by 1" (prepend a bit) is O(1) — just decrement head
+        // and write — instead of O(n) Vec::insert(0, …).
+        //
+        // capacity = divisor_len + 1 is the maximum remainder width.
+        // We over-allocate by dividend_bits at the front so head never underflows.
+        let capacity = dividend_bits + divisor_len + 1;
+        let mut rem_buf: Vec<bool> = vec![false; capacity];
+        // logical remainder occupies rem_buf[head..tail]
+        let mut head: usize = capacity; // empty at start (head == tail)
+        let mut tail: usize = capacity;
 
         // Process each bit of the dividend from most significant to least significant
         for i in (0..dividend_bits).rev() {
-            // Shift remainder left by 1 and bring in the next dividend bit
-            remainder.bits.insert(0, self.bits[i]);
+            // Shift remainder left by 1 and bring in the next dividend bit (prepend it)
+            head -= 1;
+            rem_buf[head] = self.bits[i];
+            // tail stays: the new bit occupies position head, rest is [head+1..tail)
 
             // Trim leading zeros in remainder (but keep at least 1 bit)
-            while remainder.bits.len() > 1 && !remainder.bits.last().copied().unwrap() {
-                remainder.bits.pop();
+            while tail - head > 1 && !rem_buf[tail - 1] {
+                tail -= 1;
             }
 
+            let rem_slice = &rem_buf[head..tail];
             // Check if remainder >= divisor
-            if is_gte(&remainder.bits, &divisor.bits) {
+            if is_gte(rem_slice, &divisor.bits) {
                 // Perform in-place subtraction: remainder -= divisor
-                subtract_in_place(&mut remainder.bits, &divisor.bits);
+                subtract_in_place(&mut rem_buf[head..tail], &divisor.bits);
                 quotient.bits[i] = true;
+                // Trim leading zeros again after subtraction
+                while tail - head > 1 && !rem_buf[tail - 1] {
+                    tail -= 1;
+                }
             }
         }
 
+        let remainder = Self {
+            bits: rem_buf[head..tail].to_vec(),
+        };
         (quotient, remainder)
+    }
+
+    /// Adds 1 to the value in-place, growing by one bit on overflow.
+    ///
+    /// Used to apply round-up after `shift_right_rounded`.
+    #[allow(dead_code)]
+    pub(crate) fn add_one_in_place(&mut self) {
+        for bit in &mut self.bits {
+            if *bit {
+                *bit = false;
+                // carry propagates
+            } else {
+                *bit = true;
+                return;
+            }
+        }
+        // overflow: push a new set bit
+        self.bits.push(true);
     }
 }
 
@@ -1141,11 +1209,9 @@ mod tests {
             if shift == 0 {
                 assert_eq!(shifted.to_bits(), bits);
             } else if shift > 0 {
-                assert!(
-                    shifted.to_bits()[..shift as usize]
-                        .iter()
-                        .all(|&b| b == fill)
-                );
+                assert!(shifted.to_bits()[..shift as usize]
+                    .iter()
+                    .all(|&b| b == fill));
                 assert_eq!(&shifted.to_bits()[shift as usize..], &bits[..]);
             } else {
                 assert!(shifted.to_bits()[len..].iter().all(|&b| b == fill));
@@ -1175,5 +1241,26 @@ mod tests {
             let reset_array = bit_array.reset();
             assert_eq!(reset_array.to_bits(), vec![false; len]);
         }
+    }
+
+    #[test]
+    fn test_add_one_in_place() {
+        // 0 + 1 = 1
+        let mut a = BoolBitArray::zeros(4);
+        a.add_one_in_place();
+        assert_eq!(a.to_biguint(), num_bigint::BigUint::from(1u8));
+
+        // 7 (0b0111) + 1 = 8 (0b1000)
+        let mut a = BoolBitArray::from_bits(&[true, true, true]);
+        a.add_one_in_place();
+        assert_eq!(a.to_biguint(), num_bigint::BigUint::from(8u8));
+        assert_eq!(a.len(), 4);
+
+        // All ones overflow: should push new bit
+        let mut a = BoolBitArray::ones(4);
+        let prev_len = a.len();
+        a.add_one_in_place();
+        assert_eq!(a.len(), prev_len + 1);
+        assert_eq!(a.to_biguint(), num_bigint::BigUint::from(16u8));
     }
 }
