@@ -1,6 +1,6 @@
 [package]
 name = "flexfloat"
-version = "0.1.1"
+version = "1.0.0"
 authors = ["Ferran Sanchez Llado"]
 license = "MIT"
 readme = "README.md"
