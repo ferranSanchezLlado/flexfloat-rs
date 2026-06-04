@@ -155,7 +155,7 @@ pub use flexfloat::math;
 pub mod __private {
     use crate::{flexfloat::FlexFloat, prelude::BitArrayArith};
 
-    /// Default relative tolerance used by [`assert_ff_almost_eq!`].
+    /// Default relative tolerance used by [`assert_ff_almost_eq`].
     pub const DEFAULT_ASSERT_FF_ALMOST_EQ_TOLERANCE: f64 = 1e-8;
 
     #[track_caller]

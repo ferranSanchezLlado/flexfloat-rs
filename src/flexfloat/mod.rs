@@ -263,7 +263,7 @@ mod tests {
                 .to_f64()
                 .unwrap()
                 .to_bits(),
-            1.0f64.next_up().to_bits()
+            1.0f64.to_bits() + 1
         );
         assert_eq!(
             FlexFloat::<DefaultBitArray>::from(1.0)
@@ -271,7 +271,7 @@ mod tests {
                 .to_f64()
                 .unwrap()
                 .to_bits(),
-            1.0f64.next_down().to_bits()
+            1.0f64.to_bits() - 1
         );
 
         assert_eq!(neg_zero.total_cmp(&pos_zero), Ordering::Less);

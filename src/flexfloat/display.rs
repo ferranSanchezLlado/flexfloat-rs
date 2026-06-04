@@ -573,7 +573,7 @@ fn scaled_integer_bound(
 
 fn choose_closest_integer(exact: &Rational, exp10: i64, lower: &BigInt, upper: &BigInt) -> BigInt {
     let scaled = exact.scaled_by_pow10(-exp10);
-    let rounded = round_rational_to_even_integer(&scaled);
+    let rounded = round_rational_to_integer(&scaled);
     if rounded < *lower {
         lower.clone()
     } else if rounded > *upper {
@@ -599,16 +599,12 @@ fn ceil_div_positive(numerator: &BigInt, denominator: &BigInt) -> BigInt {
     }
 }
 
-fn round_rational_to_even_integer(value: &Rational) -> BigInt {
+fn round_rational_to_integer(value: &Rational) -> BigInt {
     let quotient = &value.numerator / &value.denominator;
     let remainder = &value.numerator % &value.denominator;
     let doubled = &remainder << 1usize;
 
     if doubled < value.denominator {
-        quotient
-    } else if doubled > value.denominator {
-        quotient + 1u8
-    } else if (&quotient & BigInt::one()).is_zero() {
         quotient
     } else {
         quotient + 1u8

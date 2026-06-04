@@ -22,7 +22,7 @@ pub(crate) const fn n_experiments() -> usize {
 /// Returns a random seed for reproducible tests.
 #[fixture]
 pub(crate) fn seed() -> u64 {
-    *SEED.get_or_init(|| rand::random())
+    *SEED.get_or_init(rand::random)
 }
 
 /// Returns a random number generator for tests.
@@ -113,7 +113,7 @@ pub(crate) fn string_to_bits(s: &str) -> Vec<bool> {
 pub(crate) fn string_to_bytes(s: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
     for bits in s.as_bytes().chunks(8) {
-        let string = str::from_utf8(bits).unwrap();
+        let string = std::str::from_utf8(bits).unwrap();
 
         let mut byte = u8::from_str_radix(string, 2).unwrap();
         byte = byte.reverse_bits() >> (8 - bits.len());

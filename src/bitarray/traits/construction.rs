@@ -290,7 +290,6 @@ mod tests {
         }
     }
 
-
     #[rstest]
     fn test_default_zeros(mut rng: impl Rng, n_experiments: usize) {
         let bit_array = BitArrayTest::zeros(10);
