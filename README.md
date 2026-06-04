@@ -1,28 +1,28 @@
 # FlexFloat
 
-A high-precision Rust library for arbitrary precision floating-point arithmetic with growable exponents and fixed-size fractions. FlexFloat extends IEEE 754 double-precision format to handle numbers beyond the standard range while maintaining computational efficiency and precision consistency.
+A high-precision Rust library for arbitrary-precision floating-point arithmetic with growable exponents and fixed-size fractions. FlexFloat extends IEEE 754 double-precision format to handle numbers beyond the standard range while maintaining computational efficiency and precision consistency.
 
 [![Crates.io](https://img.shields.io/crates/v/flexfloat.svg)](https://crates.io/crates/flexfloat)
 [![Documentation](https://docs.rs/flexfloat/badge.svg)](https://docs.rs/flexfloat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎯 Overview
+## Overview
 
 FlexFloat provides a flexible floating-point arithmetic system that automatically adapts to the scale of your computations:
 
-- **🔄 Growable Exponents**: Automatically expand exponent bit width when needed
-- **📏 Fixed Precision**: Maintain consistent 52-bit mantissa for precision consistency  
-- **🔗 IEEE 754 Compatible**: Full support for standard floating-point operations and special values
-- **⚡ Performance Focused**: Efficient operations while maintaining arbitrary precision capabilities
-- **🛠️ Extensible**: Configurable bit array backends for different performance needs
+- **🔄 Growable Exponents**: Automatically expand exponent bit width when values exceed the current range
+- **📏 Fixed Precision**: Maintain consistent 52-bit mantissa (fraction) for precision consistency
+- **🔗 IEEE 754 Compatible**: Full support for standard floating-point operations and special values (±0, ±∞, NaN)
+- **⚡ Performance Focused**: Efficient operations while maintaining arbitrary-precision capabilities
+- **🛠️ Backend-generic API**: The public API is generic over the `BitArray` trait, with `BoolBitArray` as the default backend
 
-## 🚀 Quick Start
+## Quick Start
 
 Add FlexFloat to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-flexfloat = "0.1.0"
+flexfloat = "0.1.1"
 ```
 
 ### Basic Usage
@@ -35,9 +35,9 @@ let x = FlexFloat::from(3.14159);
 let y = FlexFloat::from(2.71828);
 
 // Perform arithmetic operations
-let sum = x + y;  // Planned
-let neg_x = -x;
-let abs_y = y.abs();
+let sum = x + y;  // Arithmetic operations
+let neg_x = -x;   // Negation
+let abs_y = y.abs();  // Absolute value
 
 // Work with special values
 let zero = FlexFloat::zero();
@@ -51,7 +51,7 @@ let result: f64 = sum.into();
 ### Advanced Examples
 
 ```rust
-use flexfloat::{FlexFloat, bitarray::{BitArray, BoolBitArray}};
+use flexfloat::{FlexFloat, bitarray::{BitArray, BoolBitArray, UsizeBitArray}};
 
 // Inspect internal representation
 let num = FlexFloat::from(123.456);
@@ -62,6 +62,7 @@ println!("Fraction bits: {}", num.fraction().len());
 // Work with bit arrays directly
 let custom_bits = BoolBitArray::from_bits(&[true, false, true]);
 let from_bytes = BoolBitArray::from_bytes(&[0xFF, 0x00], 16);
+let packed_bits = UsizeBitArray::from_bits(&[true, false, true, true]);
 
 // Handle special cases
 if num.is_nan() {
@@ -73,17 +74,17 @@ if num.is_nan() {
 }
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 FlexFloat is built around two main components:
 
 ### BitArray Module
 
-Provides flexible bit manipulation with multiple implementations:
+Provides flexible bit manipulation with the backends currently shipped in this crate:
 
 - **BoolBitArray**: Vector of booleans for simplicity and debugging
-- **Extensible design**: Easy to add optimized implementations (packed bits, SIMD, etc.)
-- **Rich conversion utilities**: Support for bytes, BigInt, f64, and more
+- **UsizeBitArray**: Packed `usize`-backed storage used for backend consistency coverage
+- **Rich conversion utilities**: Support for bytes, BigUint/BigInt, f64, and more
 
 ### FlexFloat Module  
 
@@ -94,7 +95,7 @@ Core floating-point implementation featuring:
 - **Special values**: Full support for ±0, ±∞, and NaN
 - **Generic backend**: Works with any BitArray implementation
 
-## 📊 Comparison
+## Comparison
 
 | Feature     | f64     | BigDecimal | FlexFloat       |
 | ----------- | ------- | ---------- | ----------------|
@@ -104,9 +105,9 @@ Core floating-point implementation featuring:
 | Memory      | 8 bytes | Variable   | Variable        |
 | IEEE 754    | Full    | Partial    | Full            |
 
-## 🎛️ Configuration
+## Configuration
 
-### Custom Bit Array Backends
+### Backend Selection
 
 ```rust
 use flexfloat::FlexFloat;
@@ -117,7 +118,7 @@ type CustomFloat = FlexFloat<BoolBitArray>;
 let num = CustomFloat::from(42.0);
 ```
 
-## 🔬 Technical Details
+## Technical Details
 
 ### Exponent Growth Algorithm
 
@@ -125,8 +126,8 @@ FlexFloat uses an adaptive exponent sizing algorithm:
 
 1. **Start**: 11-bit exponent (IEEE 754 standard)
 2. **Monitor**: Check if values fit in current range
-3. **Expand**: Grow exponent field when overflow detected  
-4. **Two's complement**: Use signed representation for efficiency
+3. **Expand**: Grow exponent field when overflow/underflow is detected
+4. **Signed representation**: Uses offset bias (half the range) for efficient signed exponent storage
 
 ### Memory Layout
 
@@ -142,40 +143,41 @@ FlexFloat<B> {
 
 - **Bit-perfect conversion** with standard f64
 - **Special values** handled correctly
-- **Rounding modes** preserved (planned)
-- **Exception handling** IEEE compliant (planned)
 
-## 🚧 Current Status
+## Current Status
 
-**This library is currently in development.** Implemented features:
+Current release highlights:
 
 - ✅ Core FlexFloat structure
-- ✅ BitArray trait and BoolBitArray implementation  
+- ✅ BitArray trait and BoolBitArray implementation
 - ✅ IEEE 754 conversion (to/from f64)
 - ✅ Special values (±0, ±∞, NaN)
 - ✅ Basic operations (negation, absolute value)
-- ⏳ Arithmetic operations (addition, subtraction, multiplication, division)
-- ⏳ Comparison operations
-- ⏳ Mathematical functions (sqrt, exp, log, trig)
-- ⏳ Optimized bit array implementations
+- ✅ Arithmetic operations (addition, subtraction, multiplication, division)
+- ✅ Comparison operations (PartialEq, PartialOrd, classify, total_cmp)
+- ✅ Mathematical functions (round, floor, ceil, exp, exp2, exp_m1, ln, ln_1p, sqrt, cbrt, hypot, trig, hyperbolic)
+- ✅ f64-style helpers (`min`, `max`, `clamp`, `%`, `rem_euclid`, `div_euclid`, `powi`, `next_up`, `next_down`, `FromStr`)
+- ✅ Additional packed backend coverage via `UsizeBitArray`
+- ⏳ Further backend optimization work (SIMD, specialized storage)
 - ⏳ Serialization support
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Areas where help is needed:
 
-- **Arithmetic implementations**: Addition, subtraction, multiplication, division
-- **Optimized bit arrays**: Packed bit storage, SIMD operations  
-- **Mathematical functions**: Elementary functions, special functions
+- **Optimized bit arrays**: Packed bit storage, SIMD operations
 - **Performance optimization**: Benchmarking and profiling
 - **Documentation**: Examples, tutorials, API documentation
 - **Testing**: Edge cases, property-based testing
+- **Serialization**: serde support for FlexFloat types
 
-## 📝 License
+Development workflow details live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - IEEE 754-2019 Standard for reference
 - `num-bigint` crate for arbitrary precision integer support
@@ -183,9 +185,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Note**: FlexFloat is designed for applications requiring extended range floating-point arithmetic while maintaining precision consistency. For applications needing arbitrary precision (variable mantissa), consider `BigDecimal` or similar libraries.
+**Note**: FlexFloat is designed for applications requiring extended-range floating-point arithmetic while maintaining precision consistency through a fixed 52-bit mantissa. For applications needing arbitrary precision with variable mantissa sizes, consider `BigDecimal` or similar libraries.
 
-## Git hook: Local pre-commit checks
+## Git Hook: Local Pre-Commit Checks
 
 This repository includes a local Git hook that runs the same checks as the project's CI workflow (format check, clippy, tests, builds, and docs). The hook lives in `.githooks/pre-commit` and is not enabled by default.
 
@@ -195,4 +197,23 @@ To enable the hook locally run:
 bash scripts/install-hooks.sh
 ```
 
-Note: these checks may be slow (they run the full test/build matrix) — you can skip the hook temporarily with `git commit --no-verify` when necessary.
+Note: these checks may be slow because they run the full local quality suite.
+
+## Release Workflow
+
+This repository includes a manual GitHub Actions workflow at `.github/workflows/release.yml` for crates.io releases.
+
+Before running it, add a `CARGO_REGISTRY_TOKEN` repository secret with a crates.io API token that has publish access.
+
+The workflow only succeeds when dispatched from `main`.
+
+`CHANGELOG.md` is managed manually as part of release preparation. The workflow verifies that an entry for the requested version already exists before it tags and publishes.
+
+When you trigger the `Release` workflow, it will:
+
+- bump `Cargo.toml`, the README dependency snippet, and the changelog heading for the requested version
+- run formatting, clippy, tests, and `cargo publish --dry-run`
+- build docs with rustdoc warnings denied
+- create a release commit and `v<version>` tag
+- push the commit and tag to `main`
+- publish the crate to crates.io
