@@ -229,7 +229,7 @@ mod tests {
     use super::*;
     use crate::bitarray::traits::tests::BitArrayTest;
     use crate::bitarray::traits::*;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     #[rstest]
     fn test_default_append_bool(mut rng: impl Rng, n_experiments: usize) {

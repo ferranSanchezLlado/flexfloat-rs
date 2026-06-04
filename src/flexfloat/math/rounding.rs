@@ -7,8 +7,12 @@
 //! - `trunc`: Truncate fractional part (round toward zero)
 //! - `fract`: Extract fractional part
 
+use num_bigint::BigInt;
+use num_traits::Zero;
+
+use crate::flexfloat::FlexFloat;
 use crate::flexfloat::consts;
-use crate::{BitArray, BitArrayArith, FlexFloat};
+use crate::{BitArray, BitArrayArith};
 
 /// Rounds the value to the nearest integer using round half away from zero.
 ///
@@ -37,11 +41,13 @@ use crate::{BitArray, BitArrayArith, FlexFloat};
 /// let rounded_y = math::round(y);
 /// assert_eq!(rounded_y, FlexFloat::from(-2.0));
 /// ```
-pub fn round<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn round<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     // Handle special cases: NaN, Infinity
     if value.is_nan() || value.is_infinite() {
         value
-    } else if value >= FlexFloat::zero() {
+    } else if value >= consts::ZERO {
         floor(value + &consts::HALF)
     } else {
         ceil(value - &consts::HALF)
@@ -76,13 +82,13 @@ pub fn round<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let floored_y = math::floor(y);
 /// assert_eq!(floored_y, FlexFloat::from(-3.0));
 /// ```
-pub fn floor<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn floor<Exp: BitArray, Frac: BitArray>(value: FlexFloat<Exp, Frac>) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() || value.is_zero() {
         return value;
     }
 
     let trunc = value.clone().to_int().expect("Handled NaN/Inf above");
-    let value_trunc: FlexFloat<B> = FlexFloat::from_int(trunc.clone());
+    let value_trunc: FlexFloat<Exp, Frac> = FlexFloat::from_int(trunc.clone());
     if value_trunc == value {
         return value;
     }
@@ -123,13 +129,13 @@ pub fn floor<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let ceiled_y = math::ceil(y);
 /// assert_eq!(ceiled_y, FlexFloat::from(-2.0));
 /// ```
-pub fn ceil<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn ceil<Exp: BitArray, Frac: BitArray>(value: FlexFloat<Exp, Frac>) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() || value.is_zero() {
         return value;
     }
 
     let trunc = value.clone().to_int().expect("Handled NaN/Inf above");
-    let value_trunc: FlexFloat<B> = FlexFloat::from_int(trunc.clone());
+    let value_trunc: FlexFloat<Exp, Frac> = FlexFloat::from_int(trunc.clone());
     if value_trunc == value {
         return value;
     }
@@ -168,7 +174,7 @@ pub fn ceil<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let truncated_y = math::trunc(y);
 /// assert_eq!(truncated_y, FlexFloat::from(-2.0));
 /// ```
-pub fn trunc<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn trunc<Exp: BitArray, Frac: BitArray>(value: FlexFloat<Exp, Frac>) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() || value.is_zero() {
         return value;
     }
@@ -203,18 +209,68 @@ pub fn trunc<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let fractional_y = math::fract(y);
 /// assert_eq!(fractional_y, FlexFloat::from(-0.75));
 /// ```
-pub fn fract<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn fract<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
         return value;
     }
     if value.is_infinite() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
 
     value.clone() - trunc(value)
 }
 
-impl<B: BitArrayArith> FlexFloat<B> {
+/// Rounds to nearest integer, ties to even (IEEE 754 default rounding mode).
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::prelude::*;
+/// use flexfloat::math::round_ties_even;
+///
+/// assert_eq!(round_ties_even(FlexFloat::from(2.5)), FlexFloat::from(2.0));
+/// assert_eq!(round_ties_even(FlexFloat::from(3.5)), FlexFloat::from(4.0));
+/// ```
+pub fn round_ties_even<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    if value.is_nan() || value.is_infinite() || value.is_zero() {
+        return value;
+    }
+    let half = consts::HALF.convert_to::<Exp, Frac>();
+    let f = fract(value.clone());
+    let floored = floor(value.clone());
+    if f == half {
+        // Positive tie: choose whichever neighbour is even.
+        // floor(value) and ceil(value) = floor + 1 differ by 1, so exactly one is even.
+        // We check floor's parity via its BigInt representation.
+        let floored_int = floored.to_int().unwrap_or(BigInt::zero());
+        if (&floored_int & BigInt::from(1u8)).is_zero() {
+            // floor is even → round down
+            floored
+        } else {
+            // floor is odd → round up (ceil = floor + 1, which is even)
+            ceil(value)
+        }
+    } else if f == -half {
+        // Negative tie: ceil(value) and floor(value) = ceil - 1 differ by 1.
+        let ceiled = ceil(value.clone());
+        let ceiled_int = ceiled.to_int().unwrap_or(BigInt::zero());
+        if (&ceiled_int & BigInt::from(1u8)).is_zero() {
+            // ceil is even → round up (toward zero for negatives)
+            ceiled
+        } else {
+            // ceil is odd → round down (away from zero), which is even
+            floored
+        }
+    } else {
+        round(value)
+    }
+}
+
+impl<Exp: BitArrayArith, Frac: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Rounds the value to the nearest integer using round half away from zero.
     ///
     /// This method rounds the floating-point value to the nearest integer.
@@ -358,6 +414,27 @@ impl<B: BitArrayArith> FlexFloat<B> {
     pub fn fract(self) -> Self {
         fract(self)
     }
+
+    /// Rounds to the nearest integer using IEEE 754 round-to-nearest-even (banker's rounding).
+    ///
+    /// When the fractional part is exactly 0.5, rounds to the nearest even integer,
+    /// unlike [`round`](Self::round) which always rounds away from zero.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::prelude::*;
+    ///
+    /// // 0.5 → 0 (nearest even)
+    /// assert_eq!(FlexFloat::from(0.5).round_ties_even(), FlexFloat::from(0.0));
+    /// // 1.5 → 2 (nearest even)
+    /// assert_eq!(FlexFloat::from(1.5).round_ties_even(), FlexFloat::from(2.0));
+    /// // 2.5 → 2 (nearest even)
+    /// assert_eq!(FlexFloat::from(2.5).round_ties_even(), FlexFloat::from(2.0));
+    /// ```
+    pub fn round_ties_even(self) -> Self {
+        round_ties_even(self)
+    }
 }
 
 #[cfg(test)]
@@ -366,7 +443,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     /// Tests the ceil operation for FlexFloat.
     #[rstest]
@@ -376,7 +453,7 @@ mod tests {
             let ff = FlexFloat::from(value);
             let rounded_ff = ff.ceil();
             let expected = value.ceil();
-            let converted_result: f64 = rounded_ff.into();
+            let converted_result: f64 = rounded_ff.try_into().unwrap_or(f64::NAN);
             assert_almost_eq(converted_result, expected, &format!("ceil({value:#?})"));
         }
     }
@@ -389,7 +466,7 @@ mod tests {
             let ff = FlexFloat::from(value);
             let rounded_ff = ff.floor();
             let expected = value.floor();
-            let converted_result: f64 = rounded_ff.into();
+            let converted_result: f64 = rounded_ff.try_into().unwrap_or(f64::NAN);
             assert_almost_eq(converted_result, expected, &format!("floor({value:#?})"));
         }
     }
@@ -402,7 +479,7 @@ mod tests {
             let ff = FlexFloat::from(value);
             let rounded_ff = ff.round();
             let expected = value.round();
-            let converted_result: f64 = rounded_ff.into();
+            let converted_result: f64 = rounded_ff.try_into().unwrap_or(f64::NAN);
             assert_almost_eq(converted_result, expected, &format!("round({value:#?})"));
         }
     }
@@ -415,7 +492,7 @@ mod tests {
             let ff = FlexFloat::from(value);
             let truncated_ff = ff.trunc();
             let expected = value.trunc();
-            let converted_result: f64 = truncated_ff.into();
+            let converted_result: f64 = truncated_ff.try_into().unwrap_or(f64::NAN);
             assert_almost_eq(converted_result, expected, &format!("trunc({value:#?})"));
         }
     }

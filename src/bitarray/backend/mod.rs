@@ -5,7 +5,7 @@
 //! Most library users should never need to import anything from here.
 //!
 //! Implementing [`BitArrayPrimitives`] for your type lets the default
-//! implementations of [`BitArrayManipulation`] work without falling back
+//! implementations of [`BitArrayManipulation`](crate::bitarray::BitArrayManipulation) work without falling back
 //! to slow `Vec<bool>` round-trips.
 //!
 //! # Stability

@@ -31,6 +31,9 @@
 //!   easy to inspect; ideal for debugging and unit tests. This is also the
 //!   [`DefaultBitArray`].
 //! - **[`UsizeBitArray`]** — word-packed storage. Faster for large widths.
+//! - **[`StaticBitArray<N>`]** — const-generic, compile-time bit array. Zero
+//!   overhead for constants, but read-only and no arithmetic. Ideal for
+//!   `const` contexts and `FlexFloat` constant definitions.
 //!
 //! ## Writing your own backend
 //!
@@ -54,13 +57,13 @@
 pub mod backend;
 pub mod bit_ref;
 pub mod boolean_list;
-pub(crate) mod static_boolean_array;
+pub mod static_bit_array;
 pub mod traits;
 pub mod usize_list;
 
-pub use backend::BitArrayPrimitives;
 pub use bit_ref::BitRef;
 pub use boolean_list::BoolBitArray;
+pub use static_bit_array::StaticBitArray;
 pub use traits::BitArray;
 pub use traits::BitArrayArith;
 pub use usize_list::UsizeBitArray;
@@ -72,4 +75,4 @@ pub use traits::{
 };
 
 /// Default `BitArray` implementation for general use in `1.x`.
-pub type DefaultBitArray = BoolBitArray;
+pub type DefaultBitArray = UsizeBitArray;

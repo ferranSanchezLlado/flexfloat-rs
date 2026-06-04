@@ -2,10 +2,10 @@
 //!
 //! Implementing these methods lets a backend opt out of the slow
 //! `to_bits()` / `from_bits()` round-trips that the default impls of
-//! [`BitArrayManipulation`] fall back on.
+//! [`BitArrayManipulation`](crate::bitarray::BitArrayManipulation) fall back on.
 //!
 //! Most consumers should never call these methods directly; use the
-//! high-level operations on [`BitArrayManipulation`] instead.
+//! high-level operations on [`BitArrayManipulation`](crate::bitarray::BitArrayManipulation) instead.
 
 use core::ops::Range;
 
@@ -15,7 +15,8 @@ use crate::bitarray::traits::BitArrayAccess;
 ///
 /// Implementing this trait allows a backend to provide efficient in-place
 /// bit manipulation without going through the slow `to_bits()` / `from_bits()`
-/// round-trips used by the default implementations of [`BitArrayManipulation`].
+/// round-trips used by the default implementations of
+/// [`BitArrayManipulation`](crate::bitarray::BitArrayManipulation).
 ///
 /// This is the "narrow waist" of the backend API: the high-level manipulation
 /// methods delegate to these primitives.

@@ -24,13 +24,23 @@ use super::BitArray;
 ///
 /// * `Sub` panics on underflow (result would be negative).
 /// * `Div` panics on division by zero.
-pub trait BitArrayArith:
-    BitArray + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self>
+pub trait BitArrayArith<Rhs = Self>:
+    BitArray
+    + Add<Rhs, Output = Self>
+    + Sub<Rhs, Output = Self>
+    + Mul<Rhs, Output = Self>
+    + Div<Rhs, Output = Self>
 {
 }
 
 /// Blanket implementation: any type that satisfies all bounds is `BitArrayArith`.
-impl<T> BitArrayArith for T where
-    T: BitArray + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self>
+impl<T, Rhs> BitArrayArith<Rhs> for T
+where
+    T: BitArray
+        + Add<Rhs, Output = Self>
+        + Sub<Rhs, Output = Self>
+        + Mul<Rhs, Output = Self>
+        + Div<Rhs, Output = Self>,
+    Rhs: BitArray,
 {
 }

@@ -7,7 +7,12 @@
 //! - `to_degrees`: Convert radians to degrees
 //! - `to_radians`: Convert degrees to radians
 
-use crate::{BitArray, BitArrayArith, FlexFloat, flexfloat::consts};
+use crate::flexfloat::consts::{ConstFloat, float_to_const};
+use crate::flexfloat::{FlexFloat, consts};
+use crate::{BitArray, BitArrayArith};
+
+const DEG_PER_RAD: ConstFloat = float_to_const(180.0 / core::f64::consts::PI);
+const RAD_PER_DEG: ConstFloat = float_to_const(core::f64::consts::PI / 180.0);
 
 /// Returns the sign of the value as -1, 0, or 1.
 ///
@@ -29,7 +34,7 @@ use crate::{BitArray, BitArrayArith, FlexFloat, flexfloat::consts};
 /// let y = FlexFloat::from(-5.0);
 /// assert_eq!(math::signum(y), FlexFloat::from(-1.0));
 /// ```
-pub fn signum<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn signum<Exp: BitArray, Frac: BitArray>(value: FlexFloat<Exp, Frac>) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
         return value;
     }
@@ -64,7 +69,10 @@ pub fn signum<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::copysign(x, sign);
 /// assert_eq!(result, FlexFloat::from(-5.0));
 /// ```
-pub fn copysign<B: BitArray>(value: FlexFloat<B>, sign: FlexFloat<B>) -> FlexFloat<B> {
+pub fn copysign<Exp: BitArray, Frac: BitArray>(
+    value: FlexFloat<Exp, Frac>,
+    sign: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     // IEEE 754 §5.5.1: copysign(x, y) = x with the sign of y.
     // The sign bit is orthogonal to the payload, so this applies
     // unconditionally - including when `value` is NaN.
@@ -95,8 +103,10 @@ pub fn copysign<B: BitArray>(value: FlexFloat<B>, sign: FlexFloat<B>) -> FlexFlo
 /// let result = math::recip(x);
 /// assert_eq!(result, FlexFloat::from(0.25));
 /// ```
-pub fn recip<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
-    FlexFloat::from_f64(1.0) / value
+pub fn recip<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    consts::ONE.convert_to::<Exp, Frac>() / value
 }
 
 /// Converts radians to degrees.
@@ -119,8 +129,10 @@ pub fn recip<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let degrees = math::to_degrees(turn);
 /// assert_ff_almost_eq!(degrees, FlexFloat::from(90.0));
 /// ```
-pub fn to_degrees<B: BitArrayArith>(radians: FlexFloat<B>) -> FlexFloat<B> {
-    radians * &consts::DEG_PER_RAD
+pub fn to_degrees<Exp: BitArrayArith, Frac: BitArrayArith>(
+    radians: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    radians * DEG_PER_RAD
 }
 
 /// Converts degrees to radians.
@@ -143,11 +155,31 @@ pub fn to_degrees<B: BitArrayArith>(radians: FlexFloat<B>) -> FlexFloat<B> {
 /// let radians = math::to_radians(degrees);
 /// assert_ff_almost_eq!(radians, FlexFloat::from(core::f64::consts::PI / 4.0));
 /// ```
-pub fn to_radians<B: BitArrayArith>(degrees: FlexFloat<B>) -> FlexFloat<B> {
-    degrees * &consts::RAD_PER_DEG
+pub fn to_radians<Exp: BitArrayArith, Frac: BitArrayArith>(
+    degrees: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    degrees * RAD_PER_DEG
 }
 
-impl<B: BitArray> FlexFloat<B> {
+/// Fused multiply-add: `(value * a) + b`.
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::prelude::*;
+/// use flexfloat::math::mul_add;
+///
+/// assert_ff_almost_eq!(mul_add(FlexFloat::from(2.0), FlexFloat::from(3.0), FlexFloat::from(4.0)), FlexFloat::from(10.0));
+/// ```
+pub fn mul_add<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+    a: FlexFloat<Exp, Frac>,
+    b: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    value * a + b
+}
+
+impl<Exp: BitArrayArith, Frac: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Returns the sign of the value as -1, 0, or 1.
     ///
     /// This method returns:
@@ -190,7 +222,7 @@ impl<B: BitArray> FlexFloat<B> {
     }
 }
 
-impl<B: BitArrayArith> FlexFloat<B> {
+impl<Exp: BitArrayArith, Frac: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Returns the reciprocal (1/x) of the value.
     ///
     /// This method computes `1 / self`.
@@ -241,6 +273,26 @@ impl<B: BitArrayArith> FlexFloat<B> {
     pub fn to_radians(self) -> Self {
         to_radians(self)
     }
+
+    /// Fused multiply-add: computes `(self * a) + b` with a single rounding error.
+    ///
+    /// Because FlexFloat uses software arithmetic this is equivalent to the two-step
+    /// version, but the method exists for `f64`-API parity and may benefit from a
+    /// future hardware-FMA path.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::prelude::*;
+    ///
+    /// let x = FlexFloat::from(2.0);
+    /// let a = FlexFloat::from(3.0);
+    /// let b = FlexFloat::from(4.0);
+    /// assert_ff_almost_eq!(x.mul_add(a, b), FlexFloat::from(10.0));
+    /// ```
+    pub fn mul_add(self, a: Self, b: Self) -> Self {
+        mul_add(self, a, b)
+    }
 }
 
 #[cfg(test)]
@@ -248,8 +300,8 @@ mod tests {
     use rand::Rng;
     use rstest::rstest;
 
-    use crate::tests::*;
-    use crate::{DefaultBitArray, FlexFloat};
+    use crate::FlexFloat;
+    use crate::test_support::*;
 
     /// Tests the signum operation for FlexFloat.
     #[rstest]
@@ -281,9 +333,9 @@ mod tests {
 
     #[test]
     fn test_copysign_propagates_sign_into_nan() {
-        let nan_pos = FlexFloat::<DefaultBitArray>::nan();
-        let neg = FlexFloat::<DefaultBitArray>::from(-1.0);
-        let pos = FlexFloat::<DefaultBitArray>::from(1.0);
+        let nan_pos = FlexFloat::nan();
+        let neg = FlexFloat::from(-1.0);
+        let pos = FlexFloat::from(1.0);
 
         let r1 = super::copysign(nan_pos.clone(), neg);
         assert!(r1.is_nan(), "result must remain NaN");

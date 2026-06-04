@@ -16,8 +16,8 @@
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use flexfloat::FlexFloat;
 use flexfloat::bitarray::{BitArrayArith, BoolBitArray, UsizeBitArray};
+use flexfloat::flexfloat::FlexFloat;
 
 /// Number of AGM iterations per benchmark sample.
 /// 10 iterations gives ~3 billion correct digits worth of precision work

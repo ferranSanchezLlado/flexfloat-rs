@@ -27,6 +27,7 @@ pub trait BitArrayConstruction: Sized {
     ///
     /// // 0x7A = 0b01111010 in binary -> [0,1,0,1,1,1,1,0] in LE bit order
     /// let bits = BoolBitArray::from_bytes(&[0x7A], 8);
+    /// assert_eq!(bits.len(), 8);
     /// assert_eq!(bits[0], false);  // LSB
     /// assert_eq!(bits[1], true);
     /// assert_eq!(bits[6], true);   // MSB (7th bit)
@@ -47,9 +48,11 @@ pub trait BitArrayConstruction: Sized {
     /// ```rust
     /// use flexfloat::prelude::*;
     ///
-    /// let bits = BoolBitArray::from_bits(&[true, false, true]);
+    /// let bits = BoolBitArray::from_bits(&[true, false, false]);
     /// assert_eq!(bits.len(), 3);
     /// assert_eq!(bits[0], true);
+    /// assert_eq!(bits[1], false);
+    /// assert_eq!(bits[2], false);
     /// ```
     fn from_bits(bits: &[bool]) -> Self {
         let n_bits = bits.len();
@@ -83,7 +86,11 @@ pub trait BitArrayConstruction: Sized {
     ///
     /// let bits = BoolBitArray::from_f64(1.0);
     /// assert_eq!(bits.len(), 64);
-    /// // Bit 63 is sign, bits 62-52 are exponent, bits 51-0 are mantissa
+    /// assert_eq!(bits[63], false);  // Sign bit (positive)
+    /// // Exponent for 1.0: biased exponent 1023 = 0b01111111111, stored at bits[52..63]
+    /// assert_eq!(bits[52..63], [true, true, true, true, true, true, true, true, true, true, false]);
+    /// // Mantissa for 1.0 is all zeros (bits[0..52])
+    /// assert_eq!(bits[0..52], [false; 52]);
     /// ```
     fn from_f64(value: f64) -> Self {
         let bits = value.to_bits();
@@ -107,6 +114,8 @@ pub trait BitArrayConstruction: Sized {
     ///
     /// let big_num = BigUint::from(255u32);
     /// let bits = BoolBitArray::from_biguint(&big_num);
+    /// assert_eq!(bits.len(), 8);
+    /// assert_eq!(bits[0..8], [true; 8]); // 255 is 0b11111111
     /// ```
     fn from_biguint(value: &BigUint) -> Self {
         let bytes = value.to_bytes_le();
@@ -133,6 +142,8 @@ pub trait BitArrayConstruction: Sized {
     /// let big_num = BigUint::from(15u32);  // 0b1111
     /// let bits = BoolBitArray::from_biguint_fixed(&big_num, 8);
     /// assert_eq!(bits.len(), 8);  // Padded to 8 bits
+    /// assert_eq!(bits[0..4], [true; 4]); // Original bits
+    /// assert_eq!(bits[4..8], [false; 4]); // Padding bits
     /// ```
     fn from_biguint_fixed(value: &BigUint, n_bits: usize) -> Self {
         let bytes = value.to_bytes_le();
@@ -162,6 +173,9 @@ pub trait BitArrayConstruction: Sized {
     ///
     /// let num = BigInt::from(-5);
     /// let bits = BoolBitArray::from_bigint(&num, 8).unwrap();
+    /// assert_eq!(bits.len(), 8);
+    /// // Offset-bias encoding: stored value = -5 + 2^(8-1) = -5 + 128 = 123 = 0b01111011
+    /// assert_eq!(bits[0..8], [true, true, false, true, true, true, true, false]);
     /// ```
     fn from_bigint(value: &BigInt, n_bits: usize) -> Option<Self> {
         let half = BigInt::from(1u8) << (n_bits - 1);
@@ -189,6 +203,7 @@ pub trait BitArrayConstruction: Sized {
     /// use flexfloat::prelude::*;
     ///
     /// let zeros = BoolBitArray::zeros(8);
+    /// assert_eq!(zeros.len(), 8);
     /// assert!(zeros.iter_bits().all(|b| !b));
     /// ```
     fn zeros(n_bits: usize) -> Self {
@@ -209,6 +224,7 @@ pub trait BitArrayConstruction: Sized {
     /// use flexfloat::prelude::*;
     ///
     /// let ones = BoolBitArray::ones(8);
+    /// assert_eq!(ones.len(), 8);
     /// assert!(ones.iter_bits().all(|b| b));
     /// ```
     fn ones(n_bits: usize) -> Self {
@@ -232,7 +248,7 @@ mod tests {
     use super::*;
     use crate::bitarray::traits::tests::BitArrayTest;
     use crate::bitarray::traits::*;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     #[rstest]
     fn test_default_from_bits(mut rng: impl Rng, n_experiments: usize) {
@@ -273,6 +289,7 @@ mod tests {
             assert_eq!(bits, expected_bits);
         }
     }
+
 
     #[rstest]
     fn test_default_zeros(mut rng: impl Rng, n_experiments: usize) {

@@ -37,13 +37,13 @@
 //! let flex = FlexFloat::from(original);
 //!
 //! // Convert back to f64
-//! let recovered: f64 = flex.into();
+//! let recovered: f64 = flex.try_into().unwrap();
 //! assert_eq!(original, recovered);
 //!
 //! // Convert from BigInt and back
 //! let int_value = num_bigint::BigInt::from(42);
 //! let flex_from_int = FlexFloat::from(int_value.clone());
-//! let recovered_int: num_bigint::BigInt = flex_from_int.into();
+//! let recovered_int: num_bigint::BigInt = flex_from_int.try_into().unwrap();
 //! assert_eq!(int_value, recovered_int);
 //! ```
 
@@ -52,9 +52,10 @@ use num_traits::{One, Signed, Zero};
 
 use crate::BoolBitArray;
 use crate::bitarray::{BitArray, BitArrayConstruction, BitArrayConversion, DefaultBitArray};
+use crate::flexfloat::error::{FlexFloatToF64Error, FlexFloatToIntError};
 use crate::flexfloat::{FlexFloat, RoundedResult, grow_exponent, truncate_fraction};
 
-impl<B: BitArray> FlexFloat<B> {
+impl<Frac: BitArray, Exp: BitArray> FlexFloat<Exp, Frac> {
     /// Creates a FlexFloat from an IEEE 754 double-precision float.
     ///
     /// Converts the 64-bit IEEE 754 representation into FlexFloat components,
@@ -80,17 +81,17 @@ impl<B: BitArray> FlexFloat<B> {
     /// ```rust
     /// use flexfloat::prelude::*;
     ///
-    /// let flex: FlexFloat<DefaultBitArray> = FlexFloat::from_f64(2.5);
+    /// let flex: FlexFloat = FlexFloat::from_f64(2.5);
     /// assert!(!flex.sign());
     /// assert_eq!(flex.exponent().len(), 11);
     /// assert_eq!(flex.fraction().len(), 52);
     /// ```
     pub fn from_f64(value: f64) -> Self {
-        let bits = B::from_f64(value);
+        let bits = Frac::from_f64(value);
 
         Self {
             sign: bits.get(63).unwrap(),
-            exponent: bits.get_range(52..63).unwrap(),
+            exponent: bits.get_range(52..63).unwrap().convert_to(),
             fraction: bits.get_range(0..52).unwrap(),
         }
     }
@@ -136,7 +137,7 @@ impl<B: BitArray> FlexFloat<B> {
     /// ```
     pub fn from_int(value: BigInt) -> Self {
         if value.is_zero() {
-            return Self::new_zero();
+            return Self::zero();
         }
 
         let sign = value.is_negative();
@@ -148,13 +149,13 @@ impl<B: BitArray> FlexFloat<B> {
         // The format represents: value = (1 + fraction/2^fraction_bits) * 2^exponent
         // where exponent is stored as (actual_exponent - 1)
         let stored_exponent_value = BigInt::from(bit_length - 1);
-        let exponent: B = grow_exponent(stored_exponent_value, 11);
+        let exponent: Exp = grow_exponent(stored_exponent_value, 11);
 
         // Extract the fractional part (all bits except the MSB)
         let msb_mask = BigUint::one() << bit_length;
         let fraction_bits = &abs_value & (msb_mask - 1u8);
 
-        let fraction = B::from_biguint(&fraction_bits);
+        let fraction = Frac::from_biguint(&fraction_bits);
 
         let missing_zeros = bit_length as usize - fraction.len();
         let fraction = fraction.append_repeated(false, missing_zeros);
@@ -174,9 +175,19 @@ impl<B: BitArray> FlexFloat<B> {
             fraction,
         }
     }
+
+    /// The machine epsilon at this instance's mantissa width.
+    ///
+    /// Returns `2^(1 − mantissa_digits)` — the difference between 1 and the next
+    /// representable value, computed for the fraction width of this specific instance.
+    pub fn epsilon(&self) -> Self {
+        // mantissa_digits = fraction_len + 1, so exponent = 1 - (fraction_len + 1) = -fraction_len
+        let exp = -(self.fraction.len() as i32);
+        Self::from_f64(2.0_f64.powi(exp))
+    }
 }
 
-impl<B: BitArrayConversion> FlexFloat<B> {
+impl<Exp: BitArrayConversion, Frac: BitArrayConversion> FlexFloat<Exp, Frac> {
     /// Converts this FlexFloat to an IEEE 754 double-precision float.
     ///
     /// Reconstructs the 64-bit IEEE 754 representation from the FlexFloat
@@ -259,7 +270,7 @@ impl<B: BitArrayConversion> FlexFloat<B> {
             return Some(BigInt::ZERO);
         }
 
-        let is_subnormal = self.exponent.to_biguint().is_zero();
+        let is_subnormal = self.exponent.is_zeros();
         let exponent = if is_subnormal {
             BigInt::from(-1022)
         } else {
@@ -296,13 +307,84 @@ impl<B: BitArrayConversion> FlexFloat<B> {
     }
 }
 
-impl<B: BitArrayConversion> FlexFloat<B> {
-    pub fn convert_to<B2: BitArrayConstruction + Clone>(&self) -> FlexFloat<B2> {
+/// Convert any `FlexFloat<Exp, Frac>` (including const-backend types like
+/// `FlexFloat<StaticBitArray<11>, StaticBitArray<52>>`) to any same-backend target.
+impl<Exp, Frac> FlexFloat<Exp, Frac>
+where
+    Exp: BitArrayConversion + 'static,
+    Frac: BitArrayConversion + 'static,
+{
+    pub fn convert_to<E2: BitArrayConstruction + 'static, F2: BitArrayConstruction + 'static>(
+        self,
+    ) -> FlexFloat<E2, F2> {
         FlexFloat {
             sign: self.sign,
             exponent: self.exponent.convert_to(),
             fraction: self.fraction.convert_to(),
         }
+    }
+}
+
+/// Byte-serialisation for `FlexFloat`.
+///
+/// The layout is: `[sign byte (0 or 1)] ++ exponent_bytes ++ fraction_bytes`.
+/// The returned `usize` is the number of exponent bits, needed to reconstruct the value
+/// via [`FlexFloat::from_le_bytes`] / [`FlexFloat::from_be_bytes`].
+impl<Exp: BitArrayConversion, Frac: BitArrayConversion> FlexFloat<Exp, Frac> {
+    /// Serialise to little-endian bytes.
+    ///
+    /// Returns `(bytes, exponent_bits)`. Pass both to [`from_le_bytes`](FlexFloat::from_le_bytes) to reconstruct.
+    pub fn to_le_bytes(&self) -> (Vec<u8>, usize) {
+        let mut bytes = vec![u8::from(self.sign)];
+        let exp_bits = self.exponent.len();
+        let exp_bytes = self.exponent.to_bytes();
+        let frac_bytes = self.fraction.to_bytes();
+        bytes.extend_from_slice(&exp_bytes);
+        bytes.extend_from_slice(&frac_bytes);
+        (bytes, exp_bits)
+    }
+
+    /// Serialise to big-endian bytes.
+    ///
+    /// Returns `(bytes, exponent_bits)`. Pass both to [`from_be_bytes`](FlexFloat::from_be_bytes) to reconstruct.
+    pub fn to_be_bytes(&self) -> (Vec<u8>, usize) {
+        let (mut le, exp_bits) = self.to_le_bytes();
+        // reverse each field independently: sign stays, then flip exp slice and frac slice
+        let exp_byte_count = exp_bits.div_ceil(8);
+        let frac_byte_count = 52_usize.div_ceil(8); // fraction is always 52 bits
+        let exp_start = 1;
+        le[exp_start..exp_start + exp_byte_count].reverse();
+        le[exp_start + exp_byte_count..exp_start + exp_byte_count + frac_byte_count].reverse();
+        (le, exp_bits)
+    }
+}
+
+impl<Frac: BitArrayConstruction, Exp: BitArrayConstruction> FlexFloat<Exp, Frac> {
+    /// Deserialise from little-endian bytes produced by [`to_le_bytes`](FlexFloat::to_le_bytes).
+    pub fn from_le_bytes(bytes: &[u8], exp_bits: usize) -> Self {
+        let sign = bytes[0] != 0;
+        let exp_byte_count = exp_bits.div_ceil(8);
+        let frac_byte_count = 52_usize.div_ceil(8);
+        let exponent = Exp::from_bytes(&bytes[1..1 + exp_byte_count], exp_bits);
+        let fraction = Frac::from_bytes(
+            &bytes[1 + exp_byte_count..1 + exp_byte_count + frac_byte_count],
+            52,
+        );
+        Self {
+            sign,
+            exponent,
+            fraction,
+        }
+    }
+
+    /// Deserialise from big-endian bytes produced by [`to_be_bytes`](FlexFloat::to_be_bytes).
+    pub fn from_be_bytes(bytes: &[u8], exp_bits: usize) -> Self {
+        let exp_byte_count = exp_bits.div_ceil(8);
+        let frac_byte_count = 52_usize.div_ceil(8);
+        let mut le = bytes.to_vec();
+        le[1..1 + exp_byte_count].reverse();
+        le[1 + exp_byte_count..1 + exp_byte_count + frac_byte_count].reverse();
+        Self::from_le_bytes(&le, exp_bits)
     }
 }
 
@@ -313,6 +395,41 @@ impl From<f64> for FlexFloat<DefaultBitArray> {
     }
 }
 
+/// Conversion from f32 to FlexFloat with default bit array.
+impl From<f32> for FlexFloat<DefaultBitArray> {
+    fn from(value: f32) -> Self {
+        Self::from_f64(value as f64)
+    }
+}
+
+/// Conversion from i64 to FlexFloat with default bit array.
+impl From<i64> for FlexFloat<DefaultBitArray> {
+    fn from(value: i64) -> Self {
+        Self::from_int(BigInt::from(value))
+    }
+}
+
+/// Conversion from u64 to FlexFloat with default bit array.
+impl From<u64> for FlexFloat<DefaultBitArray> {
+    fn from(value: u64) -> Self {
+        Self::from_int(BigInt::from(value))
+    }
+}
+
+/// Conversion from i32 to FlexFloat with default bit array.
+impl From<i32> for FlexFloat<DefaultBitArray> {
+    fn from(value: i32) -> Self {
+        Self::from_int(BigInt::from(value))
+    }
+}
+
+/// Conversion from u32 to FlexFloat with default bit array.
+impl From<u32> for FlexFloat<DefaultBitArray> {
+    fn from(value: u32) -> Self {
+        Self::from_int(BigInt::from(value))
+    }
+}
+
 /// Conversion from BigInt to FlexFloat with default bit array.
 impl From<BigInt> for FlexFloat<DefaultBitArray> {
     fn from(value: BigInt) -> Self {
@@ -320,19 +437,31 @@ impl From<BigInt> for FlexFloat<DefaultBitArray> {
     }
 }
 
-/// Conversion from FlexFloat to f64 (panics if not representable).
-impl<B: BitArrayConversion> From<FlexFloat<B>> for f64 {
-    #[track_caller]
-    fn from(value: FlexFloat<B>) -> Self {
-        value.to_f64().unwrap()
+/// Fallible conversion from `FlexFloat` to `f64`.
+///
+/// Returns `Err(FlexFloatToF64Error)` when the value cannot be represented in `f64`.
+impl<Exp: BitArrayConversion, Frac: BitArrayConversion> TryFrom<FlexFloat<Exp, Frac>> for f64 {
+    type Error = FlexFloatToF64Error;
+
+    fn try_from(value: FlexFloat<Exp, Frac>) -> Result<Self, Self::Error> {
+        value.to_f64().ok_or(FlexFloatToF64Error::ExponentOverflow)
     }
 }
 
-/// Conversion from FlexFloat to BigInt (panics if not representable).
-impl<B: BitArrayConversion> From<FlexFloat<B>> for BigInt {
-    #[track_caller]
-    fn from(value: FlexFloat<B>) -> Self {
-        value.to_int().unwrap()
+/// Fallible conversion from `FlexFloat` to `BigInt`.
+///
+/// Returns `Err(FlexFloatToIntError)` when the value is NaN, infinite, or has a fractional part.
+impl<Exp: BitArrayConversion, Frac: BitArrayConversion> TryFrom<FlexFloat<Exp, Frac>> for BigInt {
+    type Error = FlexFloatToIntError;
+
+    fn try_from(value: FlexFloat<Exp, Frac>) -> Result<Self, Self::Error> {
+        if value.is_nan() {
+            return Err(FlexFloatToIntError::NotANumber);
+        }
+        if value.is_infinite() {
+            return Err(FlexFloatToIntError::Infinite);
+        }
+        value.to_int().ok_or(FlexFloatToIntError::NotAnInteger)
     }
 }
 
@@ -344,7 +473,7 @@ mod tests {
 
     use super::*;
     use crate::bitarray::{BitArrayConstruction, BitArrayConversion};
-    use crate::tests::*;
+    use crate::test_support::*;
 
     fn test_from_f64(mut rng: impl Rng, n_experiments: usize) {
         let special_values = [
@@ -386,7 +515,7 @@ mod tests {
 
         for value in special_values {
             let ff = FlexFloat::from(value);
-            let converted_value: f64 = ff.into();
+            let converted_value: f64 = ff.try_into().unwrap_or(f64::NAN);
             if value.is_nan() {
                 assert!(converted_value.is_nan());
             } else {
@@ -399,13 +528,13 @@ mod tests {
             exponent: DefaultBitArray::ones(11),
             fraction: DefaultBitArray::from_bits(&[true; 52]),
         };
-        let converted_value: f64 = ff.into();
+        let converted_value: f64 = ff.try_into().unwrap_or(f64::NAN);
         assert!(converted_value.is_nan());
 
         for _ in 0..n_experiments {
             let value = random_f64(&mut rng);
             let ff = FlexFloat::from(value);
-            let converted_value: f64 = ff.into();
+            let converted_value: f64 = ff.try_into().unwrap_or(f64::NAN);
             if value.is_nan() {
                 assert!(converted_value.is_nan());
             } else {
@@ -423,9 +552,9 @@ mod tests {
     #[rstest]
     fn test_to_int(mut rng: impl Rng, n_experiments: usize) {
         let special_values = [
-            FlexFloat::nan(),
-            FlexFloat::pos_infinity(),
-            FlexFloat::neg_infinity(),
+            FlexFloat::<DefaultBitArray>::nan(),
+            FlexFloat::<DefaultBitArray>::pos_infinity(),
+            FlexFloat::<DefaultBitArray>::neg_infinity(),
         ];
 
         for ff in special_values {

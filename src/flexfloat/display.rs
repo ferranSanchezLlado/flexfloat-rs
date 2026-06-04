@@ -5,10 +5,12 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
 
 use crate::bitarray::BitArray;
+use crate::flexfloat::order::{Direction, adjacent};
+use crate::prelude::BitArrayAccess;
 
 use super::FlexFloat;
 
-impl<B: BitArray> FlexFloat<B> {
+impl<Exp: BitArray, Frac: BitArray> FlexFloat<Exp, Frac> {
     /// Returns the shortest fixed-point decimal representation that round-trips to this value.
     pub fn to_decimal_string(&self) -> String {
         self.format_special()
@@ -67,10 +69,12 @@ impl<B: BitArray> FlexFloat<B> {
     fn fmt_non_special(&self, f: &mut fmt::Formatter<'_>, body: String) -> fmt::Result {
         f.pad_integral(!self.sign, "", &body)
     }
-}
 
-impl<B: BitArray> fmt::Display for FlexFloat<B> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt_with(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        formatter: impl FnOnce(&Self) -> String,
+    ) -> fmt::Result {
         if self.is_nan() {
             return f.write_str(&pad_special(f, "NaN"));
         }
@@ -78,33 +82,28 @@ impl<B: BitArray> fmt::Display for FlexFloat<B> {
             return f.pad_integral(!self.sign, "", "inf");
         }
 
-        self.fmt_non_special(f, self.format_signless_fixed(f.precision()))
+        self.fmt_non_special(f, formatter(self))
     }
 }
 
-impl<B: BitArray> fmt::LowerExp for FlexFloat<B> {
+impl<Exp: BitArray, Frac: BitArray> fmt::Display for FlexFloat<Exp, Frac> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_nan() {
-            return f.write_str(&pad_special(f, "NaN"));
-        }
-        if self.is_infinite() {
-            return f.pad_integral(!self.sign, "", "inf");
-        }
-
-        self.fmt_non_special(f, self.format_signless_scientific(f.precision(), 'e'))
+        let precision = f.precision();
+        self.fmt_with(f, |value| value.format_signless_fixed(precision))
     }
 }
 
-impl<B: BitArray> fmt::UpperExp for FlexFloat<B> {
+impl<Exp: BitArray, Frac: BitArray> fmt::LowerExp for FlexFloat<Exp, Frac> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_nan() {
-            return f.write_str(&pad_special(f, "NaN"));
-        }
-        if self.is_infinite() {
-            return f.pad_integral(!self.sign, "", "inf");
-        }
+        let precision = f.precision();
+        self.fmt_with(f, |value| value.format_signless_scientific(precision, 'e'))
+    }
+}
 
-        self.fmt_non_special(f, self.format_signless_scientific(f.precision(), 'E'))
+impl<Exp: BitArray, Frac: BitArray> fmt::UpperExp for FlexFloat<Exp, Frac> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let precision = f.precision();
+        self.fmt_with(f, |value| value.format_signless_scientific(precision, 'E'))
     }
 }
 
@@ -114,7 +113,7 @@ struct ExactDecimal {
 }
 
 impl ExactDecimal {
-    fn from_flexfloat<B: BitArray>(value: &FlexFloat<B>) -> Self {
+    fn from_flexfloat<Exp: BitArray, Frac: BitArray>(value: &FlexFloat<Exp, Frac>) -> Self {
         let (mantissa, exponent) = normalized_mantissa_and_exponent(value);
         let fraction_bits = BigInt::from(value.fraction.len());
         let binary_scale = exponent - fraction_bits;
@@ -224,7 +223,7 @@ struct RoundingBounds {
 }
 
 impl RoundingBounds {
-    fn from_flexfloat<B: BitArray>(value: &FlexFloat<B>) -> Self {
+    fn from_flexfloat<Exp: BitArray, Frac: BitArray>(value: &FlexFloat<Exp, Frac>) -> Self {
         let current = Rational::from_flexfloat(value);
         let previous = Rational::from_flexfloat(&adjacent(value, Direction::Down));
         let next = Rational::from_flexfloat(&adjacent(value, Direction::Up));
@@ -292,7 +291,7 @@ impl Rational {
         }
     }
 
-    fn from_flexfloat<B: BitArray>(value: &FlexFloat<B>) -> Self {
+    fn from_flexfloat<Exp: BitArray, Frac: BitArray>(value: &FlexFloat<Exp, Frac>) -> Self {
         let (mantissa, exponent) = normalized_mantissa_and_exponent(value);
         let mut numerator = BigInt::from(mantissa);
         let mut denominator = BigInt::one();
@@ -358,101 +357,18 @@ impl Ord for Rational {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Direction {
-    Up,
-    Down,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum BoundDirection {
+enum BoundDirection {
     Lower,
     Upper,
 }
 
-pub(crate) fn adjacent<B: BitArray>(value: &FlexFloat<B>, direction: Direction) -> FlexFloat<B> {
-    debug_assert!(!value.is_nan());
-    debug_assert!(!value.is_infinite());
-
-    if value.is_zero() {
-        return smallest_subnormal(
-            matches!(direction, Direction::Down),
-            value.exponent.len(),
-            value.fraction.len(),
-        );
-    }
-
-    let toward_more_negative = match direction {
-        Direction::Up => value.sign,
-        Direction::Down => !value.sign,
-    };
-
-    let exponent_bits = value.exponent.len();
-    let fraction_bits = value.fraction.len();
-    let exponent_max = (BigUint::one() << exponent_bits) - 1u8;
-
-    let mut exponent = value.exponent.to_biguint();
-    let mut fraction = value.fraction.to_biguint();
-
-    if toward_more_negative {
-        if exponent.is_zero() {
-            if fraction.is_zero() {
-                return smallest_subnormal(true, exponent_bits, fraction_bits);
-            }
-            fraction -= 1u8;
-            return FlexFloat::new(
-                value.sign,
-                B::from_biguint_fixed(&exponent, exponent_bits),
-                B::from_biguint_fixed(&fraction, fraction_bits),
-            );
-        }
-
-        if fraction.is_zero() {
-            exponent -= 1u8;
-            fraction = (BigUint::one() << fraction_bits) - 1u8;
-        } else {
-            fraction -= 1u8;
-        }
-    } else if exponent.is_zero() {
-        fraction += 1u8;
-        if fraction >= (BigUint::one() << fraction_bits) {
-            exponent = BigUint::one();
-            fraction = BigUint::zero();
-        }
-    } else {
-        fraction += 1u8;
-        if fraction >= (BigUint::one() << fraction_bits) {
-            fraction = BigUint::zero();
-            exponent += 1u8;
-            if exponent >= exponent_max {
-                return FlexFloat::new_infinity(value.sign);
-            }
-        }
-    }
-
-    FlexFloat::new(
-        value.sign,
-        B::from_biguint_fixed(&exponent, exponent_bits),
-        B::from_biguint_fixed(&fraction, fraction_bits),
-    )
-}
-
-fn smallest_subnormal<B: BitArray>(
-    negative: bool,
-    exponent_bits: usize,
-    fraction_bits: usize,
-) -> FlexFloat<B> {
-    FlexFloat::new(
-        negative,
-        B::zeros(exponent_bits),
-        B::from_biguint_fixed(&BigUint::one(), fraction_bits),
-    )
-}
-
-fn normalized_mantissa_and_exponent<B: BitArray>(value: &FlexFloat<B>) -> (BigUint, BigInt) {
+fn normalized_mantissa_and_exponent<Exp: BitArray, Frac: BitArray>(
+    value: &FlexFloat<Exp, Frac>,
+) -> (BigUint, BigInt) {
     let stored_exponent = value.exponent.to_bigint();
     let fraction = value.fraction.to_biguint();
-    if value.exponent.to_biguint().is_zero() {
-        (fraction, stored_exponent + 2_u8)
+    if value.exponent.is_zeros() {
+        (fraction, BigInt::from(-1022))
     } else {
         (
             fraction + (BigUint::one() << value.fraction.len()),
@@ -522,16 +438,23 @@ fn render_scientific(digits: &str, exponent: i64, exponent_char: char) -> String
 }
 
 fn format_zero_fixed(precision: Option<usize>) -> String {
-    match precision {
-        Some(0) | None => String::from("0"),
-        Some(precision) => format!("0.{}", "0".repeat(precision)),
-    }
+    format_zero(precision, None)
 }
 
 fn format_zero_scientific(precision: Option<usize>, exponent_char: char) -> String {
+    format_zero(precision, Some(exponent_char))
+}
+
+fn format_zero(precision: Option<usize>, exponent_char: Option<char>) -> String {
     match precision {
-        Some(0) | None => format!("0{exponent_char}0"),
-        Some(precision) => format!("0.{}{exponent_char}0", "0".repeat(precision)),
+        Some(0) | None => match exponent_char {
+            Some(exponent_char) => format!("0{exponent_char}0"),
+            None => String::from("0"),
+        },
+        Some(precision) => match exponent_char {
+            Some(exponent_char) => format!("0.{}{exponent_char}0", "0".repeat(precision)),
+            None => format!("0.{}", "0".repeat(precision)),
+        },
     }
 }
 
@@ -555,15 +478,35 @@ fn rounded_significant_digits(digits: &str, significant_digits: usize) -> String
 }
 
 fn round_decimal_digits(digits: &str, remove: usize) -> String {
+    round_decimal(digits, remove, 0)
+}
+
+fn round_decimal_quotient(digits: &str, divisor_power: usize) -> String {
+    round_decimal(
+        digits,
+        divisor_power,
+        divisor_power.saturating_sub(digits.len()),
+    )
+}
+
+fn round_decimal(digits: &str, remove: usize, leading_zeroes: usize) -> String {
     if remove == 0 {
         return digits.to_string();
     }
 
     if remove >= digits.len() {
+        let removed = if leading_zeroes == 0 {
+            digits.as_bytes().to_vec()
+        } else {
+            let mut removed = vec![b'0'; leading_zeroes];
+            removed.extend_from_slice(digits.as_bytes());
+            removed
+        };
+
         let should_round_up = should_round_up(
             None,
-            digits.as_bytes().first().copied().unwrap_or(b'0'),
-            &digits.as_bytes()[1..],
+            removed.first().copied().unwrap_or(b'0'),
+            &removed[1..],
         );
         return if should_round_up {
             String::from("1")
@@ -573,35 +516,6 @@ fn round_decimal_digits(digits: &str, remove: usize) -> String {
     }
 
     let split_at = digits.len() - remove;
-    let kept = &digits.as_bytes()[..split_at];
-    let removed = &digits.as_bytes()[split_at..];
-
-    let mut rounded = kept.to_vec();
-    if should_round_up(kept.last().copied(), removed[0], &removed[1..]) {
-        add_one_decimal(&mut rounded);
-    }
-
-    String::from_utf8(rounded).expect("rounded decimal digits are valid utf-8")
-}
-
-fn round_decimal_quotient(digits: &str, divisor_power: usize) -> String {
-    if divisor_power == 0 {
-        return digits.to_string();
-    }
-
-    if divisor_power >= digits.len() {
-        let pad = divisor_power - digits.len();
-        let mut removed = vec![b'0'; pad];
-        removed.extend_from_slice(digits.as_bytes());
-        let should_round_up = should_round_up(None, removed[0], &removed[1..]);
-        return if should_round_up {
-            String::from("1")
-        } else {
-            String::from("0")
-        };
-    }
-
-    let split_at = digits.len() - divisor_power;
     let kept = &digits.as_bytes()[..split_at];
     let removed = &digits.as_bytes()[split_at..];
 
@@ -701,7 +615,7 @@ fn round_rational_to_even_integer(value: &Rational) -> BigInt {
     }
 }
 
-fn significand_is_even<B: BitArray>(value: &FlexFloat<B>) -> bool {
+fn significand_is_even<Exp, Frac: BitArrayAccess>(value: &FlexFloat<Exp, Frac>) -> bool {
     value.fraction.get(0).is_none_or(|bit| !bit)
 }
 
@@ -738,7 +652,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::FlexFloat;
-    use crate::tests::{n_experiments, random_f64, rng};
+    use crate::test_support::{n_experiments, random_f64, rng};
 
     #[test]
     fn test_display_special_values() {

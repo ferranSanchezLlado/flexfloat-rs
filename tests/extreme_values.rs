@@ -4,6 +4,7 @@
 //! to ±0; FlexFloat must remain finite and non-zero with a grown exponent
 //! field, while preserving the sign.
 
+use flexfloat::FlexFloat;
 use flexfloat::prelude::*;
 
 const EXTREME_VALUES: &[f64] = &[
@@ -24,7 +25,7 @@ const EXTREME_VALUES: &[f64] = &[
     -0.0,
 ];
 
-fn classify_and_check_finite(name: &str, ff: &FlexFloat<DefaultBitArray>, f: f64) {
+fn classify_and_check_finite(name: &str, ff: &FlexFloat, f: f64) {
     if f.is_nan() {
         assert!(ff.is_nan(), "{name}: expected NaN, got {ff:?}");
         return;
@@ -47,15 +48,16 @@ fn classify_and_check_finite(name: &str, ff: &FlexFloat<DefaultBitArray>, f: f64
         );
         return;
     }
-    if let Some(round_trip) = ff.to_f64()
-        && !round_trip.is_nan()
-        && !f.is_nan()
-        && round_trip != f
-    {
-        let diff = (round_trip - f).abs() / f.abs().max(1e-300);
+    // Check relative error entirely in FlexFloat arithmetic — no to_f64 conversion.
+    let expected = FlexFloat::from(f);
+    if ff != &expected {
+        // rel = |ff - expected| / max(|expected|, MIN_POSITIVE)
+        let diff = (ff.clone() - expected.clone()).abs();
+        let denom = expected.abs().max(FlexFloat::from(1e-300_f64));
+        let rel = diff / denom;
         assert!(
-            diff < 1e-10,
-            "{name}: round-trip mismatch: ff={round_trip:?}, f={f:?} (rel={diff:.2e})",
+            rel < FlexFloat::from(1e-10_f64),
+            "{name}: round-trip mismatch: ff={ff:?}, expected f={f:?}",
         );
     }
 }
@@ -64,8 +66,8 @@ fn classify_and_check_finite(name: &str, ff: &FlexFloat<DefaultBitArray>, f: f64
 fn add_at_f64_boundaries() {
     for &a in EXTREME_VALUES {
         for &b in EXTREME_VALUES {
-            let ff_a = FlexFloat::<DefaultBitArray>::from(a);
-            let ff_b = FlexFloat::<DefaultBitArray>::from(b);
+            let ff_a = FlexFloat::from(a);
+            let ff_b = FlexFloat::from(b);
             let result = ff_a + ff_b;
             let expected = a + b;
             classify_and_check_finite(&format!("{a:?} + {b:?}"), &result, expected);
@@ -77,8 +79,8 @@ fn add_at_f64_boundaries() {
 fn sub_at_f64_boundaries() {
     for &a in EXTREME_VALUES {
         for &b in EXTREME_VALUES {
-            let ff_a = FlexFloat::<DefaultBitArray>::from(a);
-            let ff_b = FlexFloat::<DefaultBitArray>::from(b);
+            let ff_a = FlexFloat::from(a);
+            let ff_b = FlexFloat::from(b);
             let result = ff_a - ff_b;
             let expected = a - b;
             classify_and_check_finite(&format!("{a:?} - {b:?}"), &result, expected);
@@ -90,8 +92,8 @@ fn sub_at_f64_boundaries() {
 fn mul_at_f64_boundaries() {
     for &a in EXTREME_VALUES {
         for &b in EXTREME_VALUES {
-            let ff_a = FlexFloat::<DefaultBitArray>::from(a);
-            let ff_b = FlexFloat::<DefaultBitArray>::from(b);
+            let ff_a = FlexFloat::from(a);
+            let ff_b = FlexFloat::from(b);
             let result = ff_a * ff_b;
             let expected = a * b;
             classify_and_check_finite(&format!("{a:?} * {b:?}"), &result, expected);
@@ -106,8 +108,8 @@ fn div_at_f64_boundaries() {
             if b == 0.0 {
                 continue;
             }
-            let ff_a = FlexFloat::<DefaultBitArray>::from(a);
-            let ff_b = FlexFloat::<DefaultBitArray>::from(b);
+            let ff_a = FlexFloat::from(a);
+            let ff_b = FlexFloat::from(b);
             let result = ff_a / ff_b;
             let expected = a / b;
             classify_and_check_finite(&format!("{a:?} / {b:?}"), &result, expected);
@@ -117,8 +119,8 @@ fn div_at_f64_boundaries() {
 
 #[test]
 fn arithmetic_crossing_f64_overflow() {
-    let max = FlexFloat::<DefaultBitArray>::from(f64::MAX);
-    let two = FlexFloat::<DefaultBitArray>::from(2.0);
+    let max = FlexFloat::from(f64::MAX);
+    let two = FlexFloat::from(2.0);
     let huge = max.clone() * two;
     assert!(
         !huge.is_infinite(),
@@ -132,8 +134,8 @@ fn arithmetic_crossing_f64_overflow() {
 
 #[test]
 fn arithmetic_crossing_f64_underflow() {
-    let tiny = FlexFloat::<DefaultBitArray>::from(f64::MIN_POSITIVE);
-    let half = FlexFloat::<DefaultBitArray>::from(0.5);
+    let tiny = FlexFloat::from(f64::MIN_POSITIVE);
+    let half = FlexFloat::from(0.5);
     let smaller = tiny * half;
     assert!(
         !smaller.is_zero(),

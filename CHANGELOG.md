@@ -6,12 +6,49 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
-- Refactored `bitarray` into a layered API: `BitArray` now excludes arithmetic, `BitArrayArith` covers `Add`/`Sub`/`Mul`/`Div`, and backend-author primitives moved under `bitarray::backend`.
-- Moved `get_range` onto `BitArrayAccess`, tightened `BitArray` implementor requirements to `Default + PartialEq + Eq`, and updated shipped backends to the new backend-primitives surface.
-- Switched internal rounding paths to in-place increment support, which removes the old `+ B::from_bits(&[true])` round-up pattern in `flexfloat` arithmetic.
-- Prepared release-readiness metadata for the first stable release.
-- Added an explicit MSRV policy and CI validation.
-- Added missing repository policy and packaging files.
+### Architecture restructure (1.0 plan)
+
+#### Breaking changes
+
+- **`FlexFloat<B>`** struct changed to **`FlexFloat<Exp, Frac = Exp>`** — two backend type
+  parameters with a default.  The crate-root type alias
+  `pub type FlexFloat = FlexFloat<DefaultBitArray>` preserves ergonomic use without turbofish.
+- **`new_*` constructors removed** — use `zero()`, `nan()`, `pos_infinity()`, `neg_infinity()`,
+  `infinity()`, `zero_with_sign()` directly.
+- **`From<FlexFloat> for f64` / `BigInt` replaced by `TryFrom`** — returns
+  `FlexFloatToF64Error` / `FlexFloatToIntError` instead of panicking.
+- **`static_boolean_array::StaticBoolArray` removed** — replaced by
+  `static_bit_array::StaticBitArray<const N: usize>`.
+- **`bitarray::BitArrayPrimitives` no longer re-exported** from `bitarray/mod.rs` — use
+  `bitarray::backend::BitArrayPrimitives` directly.
+
+#### New features
+
+- **`FlexFloat<Exp, Frac = Exp>`** dual-backend struct — exponent and fraction fields can
+  have different `BitArray` backends.
+- **`StaticBitArray<const N: usize>`** — const-generic zero-overhead backend for compile-time
+  constants (`PI`, `E`, `TAU`, etc. are now typed as
+  `FlexFloat<StaticBitArray<11>, StaticBitArray<52>>`).
+- **Mixed-backend arithmetic** — `FlexFloat<B, B>` arithmetic accepts any
+  `FlexFloat<Exp2, Frac2>` as the RHS (including const-backend constants) without
+  `.convert_to()`.
+- **New `From` impls** — `From<f32>`, `From<i64>`, `From<u64>`, `From<i32>`, `From<u32>`.
+- **`Default for FlexFloat<B, B>`** — returns positive zero.
+- **`Sum` / `Product` for iterators**.
+- **`Neg for &FlexFloat<B, B>`** — reference negation without clone at the call site.
+- **`mul_add(self, a, b)`** — fused multiply-add (software implementation).
+- **`sin_cos(self)`** — computes sine and cosine in a single range-reduction pass.
+- **`round_ties_even(self)`** — IEEE 754 round-to-nearest-even (banker's rounding).
+- **`is_sign_positive()` / `is_sign_negative()`** — `f64`-parity aliases.
+- **`to_le_bytes()` / `to_be_bytes()` / `from_le_bytes()` / `from_be_bytes()`** — byte
+  serialisation/deserialisation.
+- **Grown-aware instance methods** — `exponent_bits()`, `mantissa_digits()`, `min_exp()`,
+  `max_exp()`, `epsilon()`.
+- **`flexfloat::error`** module with `FlexFloatToF64Error`, `FlexFloatToIntError`, and
+  `ConversionError`.
+- **Module split** — `mod.rs` split into `construct.rs`, `classify.rs`, `accessors.rs`,
+  `order.rs`, `parse.rs`, `internal.rs`; `arithmetic.rs` split into `arithmetic/` subdirectory
+  with `normalize.rs`, `add_sub.rs`, `mul_div.rs`, `rem.rs`, `neg_abs.rs`, `sums.rs`.
 
 ## [1.0.0] - TBD
 

@@ -7,11 +7,23 @@
 //! - `log2`: Base-2 logarithm
 //! - `log10`: Base-10 logarithm
 
-use core::f64;
-
+use crate::flexfloat::FlexFloat;
+use crate::flexfloat::consts::{ConstFloat, float_to_const};
 use crate::flexfloat::{consts, grow_exponent};
+use crate::math::round;
 use crate::prelude::BitArrayConversion;
-use crate::{BitArray, BitArrayArith, FlexFloat};
+use crate::{BitArray, BitArrayArith};
+
+/// Padé approximation coefficients for the exponential function.
+const PADE_EXP_COEFFS: [ConstFloat; 5] = [
+    float_to_const(1.0 / 2.0),
+    float_to_const(1.0 / 9.0),
+    float_to_const(1.0 / 72.0),
+    float_to_const(1.0 / 1008.0),
+    float_to_const(1.0 / 30240.0),
+];
+const OVERFLOW_THRESHOLD: ConstFloat = float_to_const(709.782712893384); // f64::MAX.ln()
+const EXP1M_TOLERANCE: ConstFloat = float_to_const(1e-5);
 
 /// Returns the exponential function of the value (e^x).
 ///
@@ -44,10 +56,12 @@ use crate::{BitArray, BitArrayArith, FlexFloat};
 ///
 /// assert_ff_almost_eq!(growth_factor, FlexFloat::from(4.4816890703380645));
 /// ```
-pub fn exp<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn exp<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_infinite() || value.is_nan() {
         if value.is_infinite() && value.sign {
-            return FlexFloat::new_zero();
+            return FlexFloat::zero();
         }
         return value;
     }
@@ -56,8 +70,7 @@ pub fn exp<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
         return FlexFloat::from_f64(1.0);
     }
 
-    let ln2 = consts::LN_2.to_default_bitarray();
-    let overflow_threshold = FlexFloat::<B>::from_f64(f64::MAX.ln());
+    let ln2 = consts::LN_2.convert_to::<Exp, Frac>();
     // Range reduction:
     // exp(x) = exp(k * ln(2) + r) = 2^k * exp(r)
     // where k = round(x / ln(2)) and r = x - k * ln(2)
@@ -68,23 +81,23 @@ pub fn exp<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     //   N(r) = 1 + r/2 + r^2/9 + r^3/72 + r^4/1008 + r^5/30240
     //   D(r) = 1 - r/2 + r^2/9 - r^3/72 + r^4/1008 - r^5/30240
 
-    let k = super::rounding::round(&value / &ln2);
+    let k = round(&value / &ln2);
 
     // For values beyond the f64 overflow threshold, tests only require a
     // positive finite grown-exponent result. The Padé denominator becomes
     // numerically unstable that far out in this implementation, so use the
     // already-positive dominant 2^k factor directly.
-    if value > overflow_threshold {
+    if value > OVERFLOW_THRESHOLD {
         return fast_exp2(k);
     }
 
     let r = value - &k * ln2;
 
     // Compute numerator and denominator of the Padé approximant
-    let mut numerator = FlexFloat::<B>::from_f64(1.0);
-    let mut denominator = FlexFloat::<B>::from_f64(1.0);
+    let mut numerator = consts::ONE.convert_to::<Exp, Frac>();
+    let mut denominator = consts::ONE.convert_to::<Exp, Frac>();
     let mut power = r.clone();
-    for (i, ci) in consts::PADE_EXP_COEFFS.iter().enumerate() {
+    for (i, ci) in PADE_EXP_COEFFS.iter().enumerate() {
         let term = &power * ci;
         numerator += &term;
         // -, +, -, +, -
@@ -99,18 +112,16 @@ pub fn exp<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     fast_exp2(k) * (numerator / denominator)
 }
 
-pub fn exp2<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn exp2<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
         return value;
     }
     if value.is_infinite() {
-        return if value.sign {
-            FlexFloat::new_zero()
-        } else {
-            value
-        };
+        return if value.sign { FlexFloat::zero() } else { value };
     }
-    exp(value * consts::LN_2.convert_to::<B>())
+    exp(value * consts::LN_2)
 }
 
 /// Computes 2^k for an integer k efficiently.
@@ -130,11 +141,13 @@ pub fn exp2<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// # Panics
 ///
 /// Panics if the value cannot be converted to an integer.
-pub(crate) fn fast_exp2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub(crate) fn fast_exp2<Exp: BitArray, Frac: BitArray>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     let value = value.to_int().unwrap() - 1;
 
     let exponent = grow_exponent(value, 11);
-    FlexFloat::new(false, exponent, B::zeros(52))
+    FlexFloat::new(false, exponent, Frac::zeros(52))
 }
 
 /// Returns the natural logarithm (ln) of the value.
@@ -173,21 +186,23 @@ pub(crate) fn fast_exp2<B: BitArray>(value: FlexFloat<B>) -> FlexFloat<B> {
 ///
 /// assert_ff_almost_eq!(continuous_rate, FlexFloat::from(5.0));
 /// ```
-pub fn ln<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn ln<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     // Handle special cases: negative numbers, zero, NaN, Infinity
     if value.is_nan() || value.is_infinite() {
         return value;
     }
     if value.sign {
         // Negative numbers return NaN
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
     if value.is_zero() {
         // ln(0) = -infinity
-        return FlexFloat::new_infinity(true);
+        return FlexFloat::infinity(true);
     }
     if value == consts::ONE {
-        return FlexFloat::new_zero();
+        return FlexFloat::zero();
     }
 
     // Range reduction:
@@ -199,31 +214,28 @@ pub fn ln<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     // where t = (x - 1) / (x + 1)
     // This converges much faster than ln(1+x) series
 
-    let ln2 = consts::LN_2.to_default_bitarray();
-    let tolerance = consts::TOLERANCE.to_default_bitarray();
-
     // Get the exponent value as BigInt, add 1 for the actual exponent
     let k_int = value.exponent.to_bigint() + 1;
-    let k: FlexFloat<B> = FlexFloat::from_int(k_int);
+    let k: FlexFloat<Exp, Frac> = FlexFloat::from_int(k_int);
 
     // Normalize to get mantissa (1 <= m < 2)
     // m = value / 2^k
     let m = value / fast_exp2(k.clone());
 
-    let mut t = (&m - &consts::ONE) / (&m + &consts::ONE);
+    let mut t = (&m - consts::ONE) / (&m + consts::ONE);
     let t_squared = &t * &t;
 
-    let mut ln_m: FlexFloat<B> = FlexFloat::new_zero();
+    let mut ln_m: FlexFloat<Exp, Frac> = FlexFloat::zero();
     // Worst-case convergence analysis for the series
     // ln(m) = 2 * Σ_{n>=1} t^(2n-1) / (2n-1)
     //   t_max = 1/3 (when m -> 2, t = (m-1)/(m+1) -> 1/3)
     //   |term_n| <= (1/3)^(2n-1) / (2n-1)
     // For tolerance 1e-16: need n >= 17. Cap at 20 with safety margin.
     for n in 1..=20 {
-        ln_m += &t / FlexFloat::<B>::from_f64((2 * n - 1) as f64);
+        ln_m += &t / FlexFloat::<Exp, Frac>::from_f64((2 * n - 1) as f64);
         t *= &t_squared;
 
-        if t.abs() < tolerance {
+        if t.abs() < consts::TOLERANCE {
             break;
         }
     }
@@ -231,7 +243,7 @@ pub fn ln<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
     ln_m *= &consts::TWO;
 
     // Result: k*ln(2) + ln(m)
-    k * ln2 + ln_m
+    k * consts::LN_2 + ln_m
 }
 
 /// Returns the logarithm of the value with the specified base.
@@ -257,28 +269,28 @@ pub fn ln<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 ///
 /// let sample_count = FlexFloat::from(1_000.0);
 /// let base = FlexFloat::from(10.0);
-/// let digits = math::log(sample_count, &base);
+/// let digits = math::log(sample_count, base);
 /// assert_ff_almost_eq!(digits, FlexFloat::from(3.0));
 /// ```
-pub fn log<B: BitArrayArith, B2: BitArrayConversion>(
-    value: FlexFloat<B>,
-    base: &FlexFloat<B2>,
-) -> FlexFloat<B> {
+pub fn log<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayConversion, F2: BitArrayConversion>(
+    value: FlexFloat<E1, F1>,
+    base: FlexFloat<E2, F2>,
+) -> FlexFloat<E1, F1> {
     // Handle special cases for base
     if base.is_nan() || base.sign || base.is_zero() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
-    if base == &consts::ONE {
-        return FlexFloat::new_nan();
+    if base == consts::ONE {
+        return FlexFloat::nan();
     }
 
     // Handle special cases for value (delegated to ln)
     if value.is_nan() || (value.sign && !value.is_zero()) {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
 
     // Use change of base formula: log_base(x) = ln(x) / ln(base)
-    ln(value) / ln(base.convert_to::<B>())
+    ln(value) / ln(base.convert_to::<E1, F1>())
 }
 
 /// Returns the base-2 logarithm of the value.
@@ -304,7 +316,9 @@ pub fn log<B: BitArrayArith, B2: BitArrayConversion>(
 /// let bits = math::log2(buffer_size);
 /// assert_ff_almost_eq!(bits, FlexFloat::from(10.0));
 /// ```
-pub fn log2<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn log2<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     ln(value) / &consts::LN_2
 }
 
@@ -331,45 +345,68 @@ pub fn log2<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let order_of_magnitude = math::log10(population);
 /// assert_ff_almost_eq!(order_of_magnitude, FlexFloat::from(6.0));
 /// ```
-pub fn log10<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn log10<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     ln(value) / &consts::LN_10
 }
 
-pub fn exp_m1<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+/// Returns `exp(value) - 1` with high precision for small values of `value`.
+///
+/// This function computes `exp(value) - 1` accurately even for small values of `value` where
+/// directly computing `exp(value) - 1` would lead to significant loss of precision due to
+/// subtractive cancellation. For small `value`, it uses a Taylor series expansion to maintain accuracy.
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::prelude::*;
+/// use flexfloat::math;
+///
+/// let small_value = FlexFloat::from(1e-6);
+/// let result = math::exp_m1(small_value);
+/// // exp(1e-6) - 1 ≈ 1.000000500000167e-6
+/// assert_ff_almost_eq!(result, FlexFloat::from(1e-6_f64.exp_m1()));
+/// ```
+pub fn exp_m1<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() {
-        return value.exp() - FlexFloat::<B>::from_f64(1.0);
+        return value.exp() - consts::ONE;
     }
     let abs = value.abs();
-    if abs < FlexFloat::<B>::from_f64(1e-5) {
+    if abs < FlexFloat::<Exp, Frac>::from_f64(1e-5) {
         let mut term = value.clone();
         let mut sum = term.clone();
         for n in 2..=12 {
-            term = term * value.clone() / FlexFloat::<B>::from_f64(n as f64);
+            term = term * value.clone() / FlexFloat::<Exp, Frac>::from_f64(n as f64);
             sum += term.clone();
         }
         sum
     } else {
-        exp(value) - FlexFloat::<B>::from_f64(1.0)
+        exp(value) - consts::ONE
     }
 }
 
-pub fn ln_1p<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn ln_1p<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
         return value;
     }
-    if value == FlexFloat::<B>::from_f64(-1.0) {
-        return FlexFloat::new_infinity(true);
+    if value == consts::NEGATIVE_ONE {
+        return FlexFloat::infinity(true);
     }
-    if value < FlexFloat::<B>::from_f64(-1.0) {
-        return FlexFloat::new_nan();
+    if value < consts::NEGATIVE_ONE {
+        return FlexFloat::nan();
     }
     let abs = value.abs();
-    if abs < FlexFloat::<B>::from_f64(1e-5) {
+    if abs < EXP1M_TOLERANCE {
         let mut term = value.clone();
         let mut sum = term.clone();
         for n in 2..=20 {
             term *= value.clone();
-            let part = term.clone() / FlexFloat::<B>::from_f64(n as f64);
+            let part = term.clone() / FlexFloat::<Exp, Frac>::from_f64(n as f64);
             if n % 2 == 0 {
                 sum -= part;
             } else {
@@ -378,11 +415,11 @@ pub fn ln_1p<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
         }
         sum
     } else {
-        ln(value + FlexFloat::<B>::from_f64(1.0))
+        ln(value + consts::ONE)
     }
 }
 
-impl<B: BitArrayArith> FlexFloat<B> {
+impl<Exp: BitArrayArith, Frac: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Returns the exponential function of the value (e^x).
     ///
     /// This method computes Euler's number (e) raised to the power of the input value.
@@ -459,10 +496,13 @@ impl<B: BitArrayArith> FlexFloat<B> {
     ///
     /// let file_count = FlexFloat::from(65_536.0);
     /// let base = FlexFloat::from(2.0);
-    /// let exponent = file_count.log(&base);
+    /// let exponent = file_count.log(base);
     /// assert_ff_almost_eq!(exponent, FlexFloat::from(16.0));
     /// ```
-    pub fn log<B2: BitArrayConversion>(self, base: &FlexFloat<B2>) -> Self {
+    pub fn log<Exp2: BitArrayArith, Frac2: BitArrayArith>(
+        self,
+        base: FlexFloat<Exp2, Frac2>,
+    ) -> Self {
         log(self, base)
     }
 
@@ -523,7 +563,7 @@ mod tests {
     use super::*;
     use crate::DefaultBitArray;
     use crate::bitarray::BitArrayAccess;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     #[test]
     fn test_fast_exp2_exact_powers_of_two() {
@@ -548,7 +588,7 @@ mod tests {
         }
 
         let value = 1e200;
-        let ff = FlexFloat::from(value);
+        let ff: FlexFloat<DefaultBitArray> = FlexFloat::from(value);
         let result = ff.exp();
         assert!(!result.is_infinite(), "Result should not overflow");
         assert!(result.exponent.len() > 11, "Exponent should have grown");
@@ -614,7 +654,7 @@ mod tests {
         test_binary_flexfloat_op(
             rng,
             n_experiments / 50,
-            |ff, base| ff.log(&base),
+            |ff, base| ff.log(base),
             |v, base| v.log(base),
             "log",
             |v, base| Some((v.abs() + 1e-10, base.abs() + 1e-10)),

@@ -30,7 +30,7 @@ impl ShiftRoundingInfo {
     /// Decide whether to round up given the LSB of the (already shifted) result.
     ///
     /// Implements round-to-nearest, ties-to-even:
-    ///   - guard=1 AND (round=1 OR sticky=1)         -> round up (clearly nearer)
+    ///   - guard=1 AND (round=1 OR sticky=1)          -> round up (clearly nearer)
     ///   - guard=1 AND round=0 AND sticky=0 AND lsb=1 -> tie, round to even (up)
     ///   - guard=1 AND round=0 AND sticky=0 AND lsb=0 -> tie, round to even (down)
     ///   - guard=0                                    -> round down

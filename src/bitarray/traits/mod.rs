@@ -23,7 +23,7 @@ mod conversion;
 mod manipulation;
 pub(crate) mod rounding;
 
-pub use access::{BitArrayAccess, BitArrayMutAccess};
+pub use access::{BitArrayAccess, BitArrayMutAccess, BitArrayRangeAccess};
 pub use arith::BitArrayArith;
 pub use construction::BitArrayConstruction;
 pub use conversion::BitArrayConversion;
@@ -66,6 +66,7 @@ pub(crate) use rounding::{BitArrayRounding, ShiftRoundingInfo, ShiftRoundingResu
 pub trait BitArray:
     BitArrayConstruction
     + BitArrayConversion
+    + BitArrayRangeAccess
     + BitArrayMutAccess
     + BitArrayManipulation
     + crate::bitarray::backend::BitArrayPrimitives
@@ -74,6 +75,7 @@ pub trait BitArray:
     + Default
     + PartialEq
     + Eq
+    + 'static
 {
 }
 
@@ -81,6 +83,7 @@ pub trait BitArray:
 impl<T> BitArray for T where
     T: BitArrayConstruction
         + BitArrayConversion
+        + BitArrayRangeAccess
         + BitArrayMutAccess
         + BitArrayManipulation
         + crate::bitarray::backend::BitArrayPrimitives
@@ -89,6 +92,7 @@ impl<T> BitArray for T where
         + Default
         + PartialEq
         + Eq
+        + 'static
 {
 }
 
@@ -140,7 +144,9 @@ pub(crate) mod tests {
         fn get(&self, index: usize) -> Option<bool> {
             self.bits.get(index).cloned()
         }
+    }
 
+    impl BitArrayRangeAccess for BitArrayTest {
         fn get_range(&self, range: Range<usize>) -> Option<Self>
         where
             Self: Sized,

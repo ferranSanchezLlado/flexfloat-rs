@@ -38,6 +38,7 @@
 //! ```
 
 use core::cmp::max;
+use core::iter::repeat_n;
 use core::ops::{Add, Div, Index, IndexMut, Mul, Range, Sub};
 use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
 
@@ -60,15 +61,9 @@ use crate::bitarray::traits::*;
 /// BoolBitArray is not thread-safe by default. Wrap in appropriate synchronization
 /// primitives when sharing across threads.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BoolBitArray {
     pub(crate) bits: Vec<bool>,
-}
-
-impl Default for BoolBitArray {
-    fn default() -> Self {
-        Self { bits: Vec::new() }
-    }
 }
 
 impl BitArrayConstruction for BoolBitArray {
@@ -155,7 +150,9 @@ impl BitArrayAccess for BoolBitArray {
     fn get(&self, index: usize) -> Option<bool> {
         self.bits.get(index).copied()
     }
+}
 
+impl BitArrayRangeAccess for BoolBitArray {
     fn get_range(&self, range: Range<usize>) -> Option<Self>
     where
         Self: Sized,
@@ -170,7 +167,7 @@ impl BitArrayAccess for BoolBitArray {
 impl BitArrayMutAccess for BoolBitArray {
     type BitMut<'a> = &'a mut bool;
 
-    fn get_mut(&mut self, index: usize) -> Option<&mut bool> {
+    fn get_mut(&mut self, index: usize) -> Option<Self::BitMut<'_>> {
         self.bits.get_mut(index)
     }
 }
@@ -180,26 +177,17 @@ impl BitArrayPrimitives for BoolBitArray {
         self.bits.push(value);
     }
 
-    fn fill_range(&mut self, range: Range<usize>, value: bool) {
-        for i in range {
-            if i < self.bits.len() {
-                self.bits[i] = value;
-            }
-        }
+    fn fill_range(&mut self, mut range: Range<usize>, value: bool) {
+        range.end = range.end.min(self.bits.len());
+        self.bits[range].fill(value);
     }
 
     fn copy_within_bits(&mut self, src: Range<usize>, dst_start: usize) {
-        let src_bits: Vec<bool> = self.bits[src].to_vec();
-        for (i, b) in src_bits.into_iter().enumerate() {
-            let dst = dst_start + i;
-            if dst < self.bits.len() {
-                self.bits[dst] = b;
-            }
-        }
+        self.bits.copy_within(src, dst_start);
     }
 
     fn extend_with(&mut self, count: usize, value: bool) {
-        self.bits.extend(core::iter::repeat_n(value, count));
+        self.bits.extend(repeat_n(value, count));
     }
 
     fn truncate_in_place(&mut self, n_bits: usize) {
@@ -209,6 +197,10 @@ impl BitArrayPrimitives for BoolBitArray {
     fn any_set_below(&self, bit_index: usize) -> bool {
         let take = bit_index.min(self.bits.len());
         self.bits[..take].iter().any(|&b| b)
+    }
+
+    fn reserve(&mut self, n_bits: usize) {
+        self.bits.reserve(n_bits);
     }
 }
 
@@ -220,15 +212,14 @@ impl BitArrayManipulation for BoolBitArray {
 
         if shift < 0 {
             // Negative shift: append fill bits at the high end.
-            self.bits
-                .extend(core::iter::repeat_n(fill, shift.unsigned_abs()));
+            self.bits.extend(repeat_n(fill, shift.unsigned_abs()));
             return self;
         }
 
         let shift_abs = shift as usize;
         // Positive shift: existing bits move to higher indices; prepend fill.
         self.bits.reserve(shift_abs);
-        self.bits.extend(core::iter::repeat_n(false, shift_abs));
+        self.bits.extend(repeat_n(false, shift_abs));
         self.bits.rotate_right(shift_abs);
         self.bits[..shift_abs].fill(fill);
         self
@@ -410,7 +401,7 @@ impl DivAssign for BoolBitArray {
 /// Returns true if a >= b, false otherwise
 fn is_gte(a: &[bool], b: &[bool]) -> bool {
     // Compare from most significant bit to least significant
-    let max_len = core::cmp::max(a.len(), b.len());
+    let max_len = max(a.len(), b.len());
 
     for i in (0..max_len).rev() {
         let a_bit = a.get(i).copied().unwrap_or(false);
@@ -509,24 +500,6 @@ impl BoolBitArray {
         };
         (quotient, remainder)
     }
-
-    /// Adds 1 to the value in-place, growing by one bit on overflow.
-    ///
-    /// Used to apply round-up after `shift_right_rounded`.
-    #[allow(dead_code)]
-    pub(crate) fn add_one_in_place(&mut self) {
-        for bit in &mut self.bits {
-            if *bit {
-                *bit = false;
-                // carry propagates
-            } else {
-                *bit = true;
-                return;
-            }
-        }
-        // overflow: push a new set bit
-        self.bits.push(true);
-    }
 }
 
 #[cfg(test)]
@@ -541,7 +514,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     fn test_from_bits(mut rng: impl Rng, n_experiments: usize) {
         let bits = vec![true, false, true, true, false];
@@ -763,7 +736,7 @@ mod tests {
         // Test with zero
         let biguint = BigUint::from(0u8);
         let bit_array = BoolBitArray::from_biguint(&biguint);
-        assert_eq!(bit_array.bits, vec![]);
+        assert_eq!(bit_array.bits, Vec::<bool>::new());
 
         // Test with larger known values
         let biguint = BigUint::from(0x1234u16);
@@ -1209,9 +1182,11 @@ mod tests {
             if shift == 0 {
                 assert_eq!(shifted.to_bits(), bits);
             } else if shift > 0 {
-                assert!(shifted.to_bits()[..shift as usize]
-                    .iter()
-                    .all(|&b| b == fill));
+                assert!(
+                    shifted.to_bits()[..shift as usize]
+                        .iter()
+                        .all(|&b| b == fill)
+                );
                 assert_eq!(&shifted.to_bits()[shift as usize..], &bits[..]);
             } else {
                 assert!(shifted.to_bits()[len..].iter().all(|&b| b == fill));

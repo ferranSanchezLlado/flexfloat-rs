@@ -3,6 +3,9 @@
 //! This module defines the `BitArrayConversion` trait, which provides
 //! methods for converting BitArrays to various numeric and string representations.
 
+use core::{any::TypeId, mem::transmute_copy};
+use std::mem::ManuallyDrop;
+
 use num_bigint::{BigInt, BigUint};
 
 use crate::bitarray::BitArrayConstruction;
@@ -13,7 +16,7 @@ use super::BitArrayAccess;
 ///
 /// Provides methods for converting BitArrays to bytes, bits, numeric types,
 /// and string representations.
-pub trait BitArrayConversion: BitArrayAccess {
+pub trait BitArrayConversion: BitArrayAccess + Clone + 'static {
     /// Converts the BitArray to a byte vector in little-endian format.
     ///
     /// # Returns
@@ -49,7 +52,8 @@ pub trait BitArrayConversion: BitArrayAccess {
         if self.len() != 64 {
             return None;
         }
-        let bytes: [u8; 8] = self.to_bytes().try_into().ok()?;
+        // UNSAFE: We just checked that to_bytes() returns exactly 8 bytes for 64 bits.
+        let bytes: [u8; 8] = unsafe { self.to_bytes().try_into().unwrap_unchecked() };
         Some(f64::from_bits(u64::from_le_bytes(bytes)))
     }
 
@@ -64,8 +68,8 @@ pub trait BitArrayConversion: BitArrayAccess {
     /// ```rust
     /// use flexfloat::prelude::*;
     ///
-    /// let bits = BoolBitArray::from_bits(&[true, false, true]);
-    /// assert_eq!(bits.to_bits_string(), "101");
+    /// let bits = BoolBitArray::from_bits(&[true, false, true, true, false]);
+    /// assert_eq!(bits.to_bits_string(), "01101");
     /// ```
     fn to_bits_string(&self) -> String {
         self.iter_bits()
@@ -81,6 +85,16 @@ pub trait BitArrayConversion: BitArrayAccess {
     /// # Returns
     ///
     /// BigUint representation of the bit sequence
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::prelude::*;
+    /// use num_bigint::BigUint;
+    ///
+    /// let bits = BoolBitArray::from_bits(&[true, false, true]); // 0b101 = 5
+    /// assert_eq!(bits.to_biguint(), BigUint::from(5u32));
+    /// ```
     fn to_biguint(&self) -> BigUint {
         BigUint::from_bytes_le(&self.to_bytes())
     }
@@ -93,6 +107,16 @@ pub trait BitArrayConversion: BitArrayAccess {
     /// # Returns
     ///
     /// BigInt representation in the range [-2^(n_bits-1), 2^(n_bits-1) - 1]
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::prelude::*;
+    /// use num_bigint::BigInt;
+    ///
+    /// let bits = BoolBitArray::from_bits(&[true, false, true]); // 0b101 = 5 in unsigned
+    /// assert_eq!(bits.to_bigint(), BigInt::from(1)); // 5 - 2^(3-1) = 5 - 4 = 1
+    /// ```
     fn to_bigint(&self) -> BigInt {
         let n_bits = self.len();
         let half = BigInt::from(1u8) << (n_bits - 1);
@@ -105,11 +129,16 @@ pub trait BitArrayConversion: BitArrayAccess {
     /// # Returns
     ///
     /// New BitArray of the target type with the same bit contents
-    fn convert_to<B: BitArrayConstruction + Clone>(&self) -> B
+    fn convert_to<B: BitArrayConstruction + 'static>(self) -> B
     where
         Self: Sized,
     {
-        B::from_bytes(&self.to_bytes(), self.len())
+        if TypeId::of::<Self>() == TypeId::of::<B>() {
+            // SAFETY: We just checked that Self and B are the same type, so this transmute is safe.
+            unsafe { transmute_copy(&ManuallyDrop::new(self)) }
+        } else {
+            B::from_bytes(&self.to_bytes(), self.len())
+        }
     }
 }
 
@@ -121,7 +150,7 @@ mod tests {
     use super::*;
     use crate::bitarray::traits::tests::BitArrayTest;
     use crate::bitarray::traits::*;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     #[rstest]
     fn test_default_to_bytes(mut rng: impl Rng, n_experiments: usize) {

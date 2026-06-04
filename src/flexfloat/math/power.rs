@@ -6,8 +6,8 @@
 //! - `cbrt`: Cube root
 
 use crate::{
-    BitArrayArith, FlexFloat,
-    flexfloat::consts,
+    BitArrayArith,
+    flexfloat::{FlexFloat, consts},
     math::{exp, fract, ln},
     prelude::BitArrayConversion,
 };
@@ -33,21 +33,26 @@ use crate::{
 ///
 /// let base = FlexFloat::from(2.0);
 /// let exponent = FlexFloat::from(1.0);
-/// let result = math::pow(base, &exponent);
+/// let result = math::pow(base, exponent);
 /// assert_eq!(result, FlexFloat::from(2.0));
 /// ```
-pub fn pow<B: BitArrayArith, B2: BitArrayConversion>(
-    base: FlexFloat<B>,
-    exponent: &FlexFloat<B2>,
-) -> FlexFloat<B> {
+pub fn pow<
+    E1: BitArrayArith,
+    F1: BitArrayArith,
+    E2: BitArrayConversion + Clone,
+    F2: BitArrayConversion + Clone,
+>(
+    base: FlexFloat<E1, F1>,
+    exponent: FlexFloat<E2, F2>,
+) -> FlexFloat<E1, F1> {
     // Handle special cases first
     if base.is_nan() || exponent.is_nan() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
 
     // Handle exponent = 0: base^0 = 1 (for any finite base, including 0^0 = 1)
     if exponent.is_zero() {
-        return FlexFloat::from_f64(1.0);
+        return consts::ONE.convert_to();
     }
 
     // Handle base = 0
@@ -55,15 +60,15 @@ pub fn pow<B: BitArrayArith, B2: BitArrayConversion>(
         let exp_positive = !exponent.sign;
         if exp_positive {
             // 0^positive = 0
-            return FlexFloat::from_f64(0.0);
+            return FlexFloat::zero();
         } else {
             // 0^negative = +∞
-            return FlexFloat::new_infinity(false);
+            return FlexFloat::infinity(false);
         }
     }
 
     // Handle exponent = 1: base^1 = base
-    if exponent == &consts::ONE {
+    if exponent == consts::ONE {
         return base;
     }
 
@@ -74,11 +79,11 @@ pub fn pow<B: BitArrayArith, B2: BitArrayConversion>(
 
     // For positive bases, use the standard exp(ln(base) * exponent) formula
     if base.is_positive() {
-        return exp(ln(base) * exponent.convert_to::<B>());
+        return exp(ln(base) * exponent.clone());
     }
 
     // For negative bases, we need special handling
-    let exponent_converted = exponent.convert_to::<B>();
+    let exponent_converted = exponent.convert_to::<E1, F1>();
 
     // Check if exponent has a fractional part
     let exponent_fract = fract(exponent_converted.clone());
@@ -91,13 +96,13 @@ pub fn pow<B: BitArrayArith, B2: BitArrayConversion>(
 
         // Determine the sign based on whether exponent is odd
         // An integer is odd if dividing it by 2 leaves a fractional part
-        let half_exponent = exponent_converted / &consts::TWO;
+        let half_exponent = exponent_converted / consts::TWO;
         let is_odd = !fract(half_exponent).is_zero();
 
         if is_odd { -result } else { result }
     } else {
         // Negative base with non-integer exponent returns NaN
-        FlexFloat::new_nan()
+        FlexFloat::nan()
     }
 }
 
@@ -123,8 +128,10 @@ pub fn pow<B: BitArrayArith, B2: BitArrayConversion>(
 /// let result = math::sqrt(x);
 /// assert_eq!(result, FlexFloat::from(1.0));
 /// ```
-pub fn sqrt<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
-    pow(value, &consts::HALF)
+pub fn sqrt<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    pow(value, consts::HALF)
 }
 
 /// Returns the cube root of the value.
@@ -147,21 +154,26 @@ pub fn sqrt<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::cbrt(x);
 /// assert_eq!(result, FlexFloat::from(1.0));
 /// ```
-pub fn cbrt<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn cbrt<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     // Cube root is defined for negative numbers: cbrt(-x) = -cbrt(x)
     if value.sign {
-        -pow(value.abs(), &consts::THIRD)
+        -pow(value.abs(), consts::THIRD)
     } else {
-        pow(value, &consts::THIRD)
+        pow(value, consts::THIRD)
     }
     // pow(value, &consts::THIRD)
 }
 
-pub fn hypot<B: BitArrayArith>(x: FlexFloat<B>, y: &FlexFloat<B>) -> FlexFloat<B> {
-    sqrt(x.clone() * x + y.clone() * y.clone())
+pub fn hypot<F1: BitArrayArith, E1: BitArrayArith, F2: BitArrayArith, E2: BitArrayArith>(
+    x: FlexFloat<E1, F1>,
+    y: FlexFloat<E2, F2>,
+) -> FlexFloat<E1, F1> {
+    sqrt(x.clone() * x + y.clone() * y)
 }
 
-impl<B: BitArrayArith> FlexFloat<B> {
+impl<Frac: BitArrayArith, Exp: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Returns the value raised to the power of the exponent.
     ///
     /// This method computes `self^exponent`.
@@ -173,10 +185,13 @@ impl<B: BitArrayArith> FlexFloat<B> {
     ///
     /// let base = FlexFloat::from(2.0);
     /// let exponent = FlexFloat::from(1.0);
-    /// let result = base.powf(&exponent);
+    /// let result = base.powf(exponent);
     /// assert_eq!(result, FlexFloat::from(2.0));
     /// ```
-    pub fn powf<B2: BitArrayConversion>(self, exponent: &FlexFloat<B2>) -> Self {
+    pub fn powf<E2: BitArrayConversion, F2: BitArrayConversion>(
+        self,
+        exponent: FlexFloat<E2, F2>,
+    ) -> Self {
         pow(self, exponent)
     }
 
@@ -241,7 +256,7 @@ impl<B: BitArrayArith> FlexFloat<B> {
         }
     }
 
-    pub fn hypot(self, other: &Self) -> Self {
+    pub fn hypot<E2: BitArrayArith, F2: BitArrayArith>(self, other: FlexFloat<E2, F2>) -> Self {
         hypot(self, other)
     }
 }
@@ -251,7 +266,8 @@ mod tests {
     use rand::Rng;
     use rstest::rstest;
 
-    use crate::{FlexFloat, tests::*};
+    use crate::flexfloat::FlexFloat;
+    use crate::test_support::*;
 
     /// Tests the pow operation for FlexFloat.
     #[rstest]
@@ -270,7 +286,7 @@ mod tests {
                     let base_ff = FlexFloat::from(base);
                     let exp_ff = FlexFloat::from(exp);
                     let expected = base.powf(exp);
-                    let result = base_ff.powf(&exp_ff);
+                    let result = base_ff.powf(exp_ff);
                     dbg!(base, exp, result.to_f64(), expected);
 
                     test_common_logic(
@@ -286,7 +302,7 @@ mod tests {
         test_binary_flexfloat_op(
             &mut rng,
             n_experiments / 50,
-            |a, b| a.powf(&b),
+            |a, b| a.powf(b),
             |a: f64, b: f64| a.powf(b),
             "pow",
             identity_2,
@@ -343,7 +359,7 @@ mod tests {
         test_binary_flexfloat_op(
             &mut rng,
             n_experiments / 50,
-            |a, b| a.hypot(&b),
+            |a, b| a.hypot(b),
             |a: f64, b: f64| a.hypot(b),
             "hypot",
             identity_2,

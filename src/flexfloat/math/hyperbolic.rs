@@ -5,7 +5,8 @@
 //! - `cosh`: Hyperbolic cosine function
 //! - `tanh`: Hyperbolic tangent function
 
-use crate::{BitArrayArith, FlexFloat, flexfloat::consts};
+use crate::flexfloat::FlexFloat;
+use crate::{BitArrayArith, flexfloat::consts};
 
 /// Returns the hyperbolic sine of the value.
 ///
@@ -27,8 +28,10 @@ use crate::{BitArrayArith, FlexFloat, flexfloat::consts};
 /// let result = math::sinh(x);
 /// assert_eq!(result, FlexFloat::from(0.0));
 /// ```
-pub fn sinh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
-    (value.clone().exp() - (-value).exp()) / &consts::TWO
+pub fn sinh<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    (value.clone().exp() - (-value).exp()) / consts::TWO
 }
 
 /// Returns the hyperbolic cosine of the value.
@@ -51,8 +54,10 @@ pub fn sinh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::cosh(x);
 /// assert_eq!(result, FlexFloat::from(1.0));
 /// ```
-pub fn cosh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
-    (value.clone().exp() + (-value).exp()) / &consts::TWO
+pub fn cosh<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    (value.clone().exp() + (-value).exp()) / consts::TWO
 }
 
 /// Returns the hyperbolic tangent of the value.
@@ -75,64 +80,70 @@ pub fn cosh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let result = math::tanh(x);
 /// assert_eq!(result, FlexFloat::from(0.0));
 /// ```
-pub fn tanh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn tanh<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     sinh(value.clone()) / cosh(value)
 }
 
-pub fn asinh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn asinh<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() || value.is_zero() {
         return value;
     }
     let magnitude = value.abs();
-    let one = consts::ONE.convert_to::<B>();
     let result = if magnitude.exponent.len() > 11 {
-        magnitude.ln() + consts::LN_2.convert_to::<B>()
+        magnitude.ln() + consts::LN_2
     } else {
         let square = magnitude.clone() * magnitude.clone();
-        (magnitude + (square + one).sqrt()).ln()
+        (magnitude + (square + consts::ONE).sqrt()).ln()
     };
     if value.sign { -result } else { result }
 }
 
-pub fn acosh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn acosh<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
         return value;
     }
-    let one = consts::ONE.convert_to::<B>();
-    if value < one.clone() {
-        return FlexFloat::new_nan();
+    if value < consts::ONE {
+        return FlexFloat::nan();
     }
-    if value == one {
-        return FlexFloat::new_zero();
+    if value == consts::ONE {
+        return FlexFloat::zero();
     }
     if value.is_infinite() {
         return value;
     }
     if value.exponent.len() > 11 {
-        value.ln() + consts::LN_2.convert_to::<B>()
+        value.ln() + consts::LN_2
     } else {
-        ((value.clone() - one.clone()).sqrt() * (value.clone() + one).sqrt() + value).ln()
+        ((value.clone() - consts::ONE).sqrt() * (value.clone() + consts::ONE).sqrt() + value).ln()
     }
 }
 
-pub fn atanh<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn atanh<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
         return value;
     }
-    let one = consts::ONE.convert_to::<B>();
-    if value.abs() > one.clone() {
-        return FlexFloat::new_nan();
+    if value.abs() > consts::ONE {
+        return FlexFloat::nan();
     }
-    if value == one {
-        return FlexFloat::new_infinity(false);
+    if value == consts::ONE {
+        return FlexFloat::infinity(false);
     }
-    if value == -one.clone() {
-        return FlexFloat::new_infinity(true);
+    if value == consts::NEGATIVE_ONE {
+        return FlexFloat::infinity(true);
     }
-    ((one.clone() + value.clone()).ln() - (one - value).ln()) / &consts::TWO
+    let one = consts::ONE.convert_to::<Exp, Frac>();
+    ((one.clone() + value.clone()).ln() - (one - value).ln()) / consts::TWO
 }
 
-impl<B: BitArrayArith> FlexFloat<B> {
+impl<Exp: BitArrayArith, Frac: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Returns the hyperbolic sine of the value.
     ///
     /// This method computes `sinh(self)`.
@@ -202,9 +213,9 @@ mod tests {
     use rand::Rng;
     use rstest::rstest;
 
-    use crate::FlexFloat;
+    use crate::flexfloat::FlexFloat;
     use crate::flexfloat::consts;
-    use crate::tests::*;
+    use crate::test_support::*;
 
     /// Tests the sinh operation for FlexFloat.
     #[rstest]
@@ -304,7 +315,7 @@ mod tests {
             acosh.is_finite(),
             "acosh should stay finite for grown exponents"
         );
-        assert!(asinh > consts::ONE.convert_to::<crate::DefaultBitArray>());
-        assert!(acosh > consts::ONE.convert_to::<crate::DefaultBitArray>());
+        assert!(asinh > consts::ONE);
+        assert!(acosh > consts::ONE);
     }
 }

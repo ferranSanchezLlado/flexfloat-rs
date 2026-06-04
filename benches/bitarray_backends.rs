@@ -1,8 +1,9 @@
+use core::f64;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use flexfloat::FlexFloat;
 use flexfloat::bitarray::{BitArrayArith, BoolBitArray, UsizeBitArray};
+use flexfloat::flexfloat::FlexFloat;
 
 const BIT_SIZES: [usize; 3] = [64, 256, 1024];
 const BITARRAY_BATCHES: usize = 256;
@@ -12,7 +13,7 @@ const FLOAT_INPUTS: [f64; 8] = [
     0.5,
     1.0,
     1.5,
-    3.141592653589793,
+    f64::consts::PI,
     10.25,
     1234.5678,
     65536.5,

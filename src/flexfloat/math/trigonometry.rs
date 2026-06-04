@@ -12,16 +12,60 @@
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
+use crate::BitArrayArith;
+use crate::flexfloat::FlexFloat;
 use crate::flexfloat::consts;
-use crate::{BitArrayArith, FlexFloat};
+use crate::flexfloat::consts::{ConstFloat, float_to_const};
+
+/// Minimax kernel coefficients for sine on [-π/4, π/4].
+const SIN_COEFFS: [ConstFloat; 6] = [
+    float_to_const(-1.666_666_666_666_663_2e-1),
+    float_to_const(8.333_333_333_322_49e-3),
+    float_to_const(-1.984_126_982_985_795e-4),
+    float_to_const(2.755_731_370_707_006_6e-6),
+    float_to_const(-2.505_076_025_340_686_3e-8),
+    float_to_const(1.589_690_995_211_55e-10),
+];
+
+/// Minimax kernel coefficients for cosine on [-π/4, π/4].
+const COS_COEFFS: [ConstFloat; 6] = [
+    float_to_const(-5.0e-1),
+    float_to_const(4.166_666_666_666_66e-2),
+    float_to_const(-1.388_888_888_887_411e-3),
+    float_to_const(2.480_158_728_947_673e-5),
+    float_to_const(-2.755_731_435_139_066_5e-7),
+    float_to_const(2.087_572_321_298_175e-9),
+];
+// floor((2/π) * 2^1200), stored as big-endian u64 words.
+const TWO_OVER_PI_BITS: [u64; 19] = [
+    0x0000a2f9836e4e44,
+    0x1529fc2757d1f534,
+    0xddc0db6295993c43,
+    0x9041fe5163abdebb,
+    0xc561b7246e3a424d,
+    0xd2e006492eea09d1,
+    0x921cfe1deb1cb129,
+    0xa73ee88235f52ebb,
+    0x4484e99c7026b45f,
+    0x7e413991d6398353,
+    0x39f49c845f8bbdf9,
+    0x283b1ff897ffde05,
+    0x980fef2f118b5a0a,
+    0x6d1f6d367ecf27cb,
+    0x09b74f463f669e5f,
+    0xea2d7527bac7ebe5,
+    0xf17b3d0739f78a52,
+    0x92ea6bfb5fb11f8d,
+    0x5d0856033046fc7b,
+];
 
 const TWO_OVER_PI_PRECISION_BITS: usize = 1200;
 const MIN_DYNAMIC_SHIFT_BITS: usize = 120;
 const DYNAMIC_GUARD_BITS: usize = 128;
 
 fn two_over_pi_biguint() -> BigUint {
-    let mut bytes = Vec::with_capacity(consts::TWO_OVER_PI_BITS.len() * 8);
-    for word in consts::TWO_OVER_PI_BITS {
+    let mut bytes = Vec::with_capacity(TWO_OVER_PI_BITS.len() * 8);
+    for word in TWO_OVER_PI_BITS {
         bytes.extend_from_slice(&word.to_be_bytes());
     }
     BigUint::from_bytes_be(&bytes)
@@ -77,28 +121,33 @@ fn compute_two_over_pi(n_bits: usize) -> BigUint {
     numerator / pi
 }
 
-fn scaled_fraction_to_flexfloat<B: BitArrayArith>(scaled: BigInt, shift: usize) -> FlexFloat<B> {
+fn scaled_fraction_to_flexfloat<Exp: BitArrayArith, Frac: BitArrayArith>(
+    scaled: BigInt,
+    shift: usize,
+) -> FlexFloat<Exp, Frac> {
     if scaled.is_zero() {
-        return FlexFloat::new_zero();
+        return FlexFloat::zero();
     }
 
     let sign = scaled.is_negative();
-    let numerator = FlexFloat::<B>::from_int(scaled.abs());
-    let denominator = FlexFloat::<B>::from_int(BigInt::one() << shift);
+    let numerator = FlexFloat::<Exp, Frac>::from_int(scaled.abs());
+    let denominator = FlexFloat::<Exp, Frac>::from_int(BigInt::one() << shift);
     let value = numerator / denominator;
 
     if sign { -value } else { value }
 }
 
-fn reduce_pi_over_two<B: BitArrayArith>(x: FlexFloat<B>) -> (u8, FlexFloat<B>) {
+fn reduce_pi_over_two<Exp: BitArrayArith, Frac: BitArrayArith>(
+    x: FlexFloat<Exp, Frac>,
+) -> (u8, FlexFloat<Exp, Frac>) {
     let negative = x.sign;
     let x = x.abs();
 
-    if x <= consts::FRAC_PI_4.convert_to::<B>() {
+    if x <= consts::FRAC_PI_4 {
         return (0, if negative { -x } else { x });
     }
 
-    let is_subnormal = x.exponent.to_biguint().is_zero();
+    let is_subnormal = x.exponent.is_zeros();
     let mut significand = x.fraction.to_biguint();
     let exponent = if is_subnormal {
         BigInt::from(-1022)
@@ -122,7 +171,7 @@ fn reduce_pi_over_two<B: BitArrayArith>(x: FlexFloat<B>) -> (u8, FlexFloat<B>) {
     } else {
         // Exponents beyond usize range cannot be reduced with dynamically grown
         // Payne-Hanek precision without requesting impossible allocations.
-        return (0, FlexFloat::new_zero());
+        return (0, FlexFloat::zero());
     };
 
     let product = significand * two_over_pi;
@@ -140,8 +189,8 @@ fn reduce_pi_over_two<B: BitArrayArith>(x: FlexFloat<B>) -> (u8, FlexFloat<B>) {
         .expect("quadrant must fit in u8");
 
     let scaled_remainder = BigInt::from(product) - BigInt::from(k.clone() << shift);
-    let remainder_fraction = scaled_fraction_to_flexfloat::<B>(scaled_remainder, shift);
-    let remainder = remainder_fraction * consts::FRAC_PI_2.convert_to::<B>();
+    let remainder_fraction = scaled_fraction_to_flexfloat::<Exp, Frac>(scaled_remainder, shift);
+    let remainder = remainder_fraction * consts::FRAC_PI_2;
 
     if negative {
         ((4 - quadrant) % 4, -remainder)
@@ -150,24 +199,43 @@ fn reduce_pi_over_two<B: BitArrayArith>(x: FlexFloat<B>) -> (u8, FlexFloat<B>) {
     }
 }
 
-fn sin_kernel<B: BitArrayArith>(r: FlexFloat<B>) -> FlexFloat<B> {
+fn sin_kernel<Exp: BitArrayArith, Frac: BitArrayArith>(
+    r: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     let r2 = &r * &r;
-    let mut poly: FlexFloat<B> = consts::SIN_COEFFS[5].convert_to();
-    for coeff in consts::SIN_COEFFS[..5].iter().rev() {
-        poly = &poly * &r2 + coeff.convert_to::<B>();
+    let mut poly: FlexFloat<Exp, Frac> = SIN_COEFFS[5].clone().convert_to();
+    for coeff in SIN_COEFFS[..5].iter().rev() {
+        poly = &poly * &r2 + coeff;
     }
 
     r.clone() + r * r2 * poly
 }
 
-fn cos_kernel<B: BitArrayArith>(r: FlexFloat<B>) -> FlexFloat<B> {
+fn cos_kernel<Exp: BitArrayArith, Frac: BitArrayArith>(
+    r: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     let r2 = &r * &r;
-    let mut poly: FlexFloat<B> = consts::COS_COEFFS[5].convert_to();
-    for coeff in consts::COS_COEFFS[..5].iter().rev() {
-        poly = &poly * &r2 + coeff.convert_to::<B>();
+    let mut poly: FlexFloat<Exp, Frac> = COS_COEFFS[5].clone().convert_to();
+    for coeff in COS_COEFFS[..5].iter().rev() {
+        poly = &poly * &r2 + coeff;
     }
 
-    consts::ONE.convert_to::<B>() + r2 * poly
+    r2 * poly + consts::ONE
+}
+
+fn sin_cos_reduced<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> (FlexFloat<Exp, Frac>, FlexFloat<Exp, Frac>) {
+    let (quadrant, remainder) = reduce_pi_over_two(value);
+    let sin_r = sin_kernel(remainder.clone());
+    let cos_r = cos_kernel(remainder);
+
+    match quadrant {
+        0 => (sin_r, cos_r),
+        1 => (cos_r, -sin_r),
+        2 => (-sin_r, -cos_r),
+        _ => (-cos_r, sin_r),
+    }
 }
 
 /// Returns the sine of the value (in radians).
@@ -190,24 +258,17 @@ fn cos_kernel<B: BitArrayArith>(r: FlexFloat<B>) -> FlexFloat<B> {
 /// let opposite_ratio = math::sin(angle);
 /// assert_ff_almost_eq!(opposite_ratio, FlexFloat::from(0.5));
 /// ```
-pub fn sin<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn sin<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
     if value.is_zero() {
         return value;
     }
 
-    let (quadrant, remainder) = reduce_pi_over_two(value);
-    let sin_r = sin_kernel(remainder.clone());
-    let cos_r = cos_kernel(remainder);
-
-    match quadrant {
-        0 => sin_r,
-        1 => cos_r,
-        2 => -sin_r,
-        _ => -cos_r,
-    }
+    sin_cos_reduced(value).0
 }
 
 /// Returns the cosine of the value (in radians).
@@ -228,24 +289,17 @@ pub fn sin<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let adjacent_ratio = math::cos(angle);
 /// assert_ff_almost_eq!(adjacent_ratio, FlexFloat::from(1.0));
 /// ```
-pub fn cos<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn cos<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
     if value.is_zero() {
         return consts::ONE.convert_to();
     }
 
-    let (quadrant, remainder) = reduce_pi_over_two(value);
-    let sin_r = sin_kernel(remainder.clone());
-    let cos_r = cos_kernel(remainder);
-
-    match quadrant {
-        0 => cos_r,
-        1 => -sin_r,
-        2 => -cos_r,
-        _ => sin_r,
-    }
+    sin_cos_reduced(value).1
 }
 
 /// Returns the tangent of the value (in radians).
@@ -268,9 +322,11 @@ pub fn cos<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let slope = math::tan(angle);
 /// assert_ff_almost_eq!(slope, FlexFloat::from(1.0));
 /// ```
-pub fn tan<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn tan<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() || value.is_infinite() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
     if value.is_zero() {
         return value;
@@ -302,27 +358,29 @@ pub fn tan<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let angle = math::asin(ratio);
 /// assert_ff_almost_eq!(angle, FlexFloat::from(core::f64::consts::PI / 6.0));
 /// ```
-pub fn asin<B: BitArrayArith>(_value: FlexFloat<B>) -> FlexFloat<B> {
-    if _value.is_nan() {
-        return FlexFloat::new_nan();
+pub fn asin<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    if value.is_nan() {
+        return FlexFloat::nan();
     }
-    if _value.is_zero() {
-        return _value;
-    }
-
-    let one = consts::ONE.convert_to::<B>();
-    let abs_value = _value.abs();
-    if abs_value > one {
-        return FlexFloat::new_nan();
+    if value.is_zero() {
+        return value;
     }
 
-    let pi_over_2 = consts::FRAC_PI_2.convert_to::<B>();
-    if abs_value == one {
-        return if _value.sign { -pi_over_2 } else { pi_over_2 };
+    let one = consts::ONE.convert_to::<Exp, Frac>();
+    let absvalue = value.abs();
+    if absvalue > one {
+        return FlexFloat::nan();
     }
 
-    let denominator = super::power::sqrt(one - (&_value * &_value));
-    atan2(_value, denominator)
+    let pi_over_2 = consts::FRAC_PI_2.convert_to::<Exp, Frac>();
+    if absvalue == one {
+        return if value.sign { -pi_over_2 } else { pi_over_2 };
+    }
+
+    let denominator = super::power::sqrt(one - (&value * &value));
+    atan2(value, denominator)
 }
 
 /// Returns the arccosine of the value (result in radians).
@@ -347,18 +405,20 @@ pub fn asin<B: BitArrayArith>(_value: FlexFloat<B>) -> FlexFloat<B> {
 /// let angle = math::acos(ratio);
 /// assert_ff_almost_eq!(angle, FlexFloat::from(core::f64::consts::PI / 3.0));
 /// ```
-pub fn acos<B: BitArrayArith>(_value: FlexFloat<B>) -> FlexFloat<B> {
-    if _value.is_nan() {
-        return FlexFloat::new_nan();
+pub fn acos<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
+    if value.is_nan() {
+        return FlexFloat::nan();
     }
 
-    let one = consts::ONE.convert_to::<B>();
-    let abs_value = _value.abs();
-    if abs_value > one {
-        return FlexFloat::new_nan();
+    let one = consts::ONE.convert_to::<Exp, Frac>();
+    let absvalue = value.abs();
+    if absvalue > one {
+        return FlexFloat::nan();
     }
 
-    consts::FRAC_PI_2.convert_to::<B>() - asin(_value)
+    consts::FRAC_PI_2.convert_to::<Exp, Frac>() - asin(value)
 }
 
 /// Returns the arctangent of the value (result in radians).
@@ -383,21 +443,22 @@ pub fn acos<B: BitArrayArith>(_value: FlexFloat<B>) -> FlexFloat<B> {
 /// let angle = math::atan(rise_over_run);
 /// assert_ff_almost_eq!(angle, FlexFloat::from(core::f64::consts::PI / 4.0));
 /// ```
-pub fn atan<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
+pub fn atan<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> FlexFloat<Exp, Frac> {
     if value.is_nan() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
     if value.is_zero() {
         return value;
     }
     if value.is_infinite() {
-        let pi_over_2 = consts::FRAC_PI_2.convert_to::<B>();
+        let pi_over_2 = consts::FRAC_PI_2.convert_to::<Exp, Frac>();
         return if value.sign { -pi_over_2 } else { pi_over_2 };
     }
 
     let negative = value.sign;
-    let one = consts::ONE.convert_to::<B>();
-    let half = consts::HALF.convert_to::<B>();
+    let one = consts::ONE.convert_to::<Exp, Frac>();
     let mut x = value.abs();
 
     let reciprocal = x > one;
@@ -405,31 +466,30 @@ pub fn atan<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
         x = one.clone() / x;
     }
 
-    let shifted = x >= half;
+    let shifted = x >= consts::HALF;
     if shifted {
         x = (x.clone() - &one) / (x + &one);
     }
 
-    let tolerance = consts::TOLERANCE.convert_to::<B>();
     let x_sq = &x * &x;
     let mut power = x.clone();
     let mut result = x;
     for n in 1..=30 {
         power *= &x_sq;
         power = -power;
-        let term = power.clone() / FlexFloat::<B>::from_f64((2 * n + 1) as f64);
+        let term = power.clone() / FlexFloat::<Exp, Frac>::from_f64((2 * n + 1) as f64);
         result += &term;
 
-        if term.abs() < tolerance {
+        if term.abs() < consts::TOLERANCE {
             break;
         }
     }
 
     if shifted {
-        result += consts::FRAC_PI_4.convert_to::<B>();
+        result += consts::FRAC_PI_4;
     }
     if reciprocal {
-        result = consts::FRAC_PI_2.convert_to::<B>() - result;
+        result = consts::FRAC_PI_2.convert_to::<Exp, Frac>() - result;
     }
 
     if negative { -result } else { result }
@@ -460,14 +520,17 @@ pub fn atan<B: BitArrayArith>(value: FlexFloat<B>) -> FlexFloat<B> {
 /// let bearing = math::atan2(y, x);
 /// assert_ff_almost_eq!(bearing, FlexFloat::from(core::f64::consts::PI / 4.0));
 /// ```
-pub fn atan2<B: BitArrayArith>(y: FlexFloat<B>, x: FlexFloat<B>) -> FlexFloat<B> {
+pub fn atan2<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayArith, F2: BitArrayArith>(
+    y: FlexFloat<E1, F1>,
+    x: FlexFloat<E2, F2>,
+) -> FlexFloat<E1, F1> {
     if y.is_nan() || x.is_nan() {
-        return FlexFloat::new_nan();
+        return FlexFloat::nan();
     }
 
-    let pi = consts::PI.convert_to::<B>();
-    let pi_over_2 = consts::FRAC_PI_2.convert_to::<B>();
-    let pi_over_4 = consts::FRAC_PI_4.convert_to::<B>();
+    let pi = consts::PI.convert_to::<E1, F1>();
+    let pi_over_2 = consts::FRAC_PI_2.convert_to::<E1, F1>();
+    let pi_over_4 = consts::FRAC_PI_4.convert_to::<E1, F1>();
     let three_pi_over_4 = pi.clone() - pi_over_4.clone();
 
     if y.is_infinite() {
@@ -488,7 +551,7 @@ pub fn atan2<B: BitArrayArith>(y: FlexFloat<B>, x: FlexFloat<B>) -> FlexFloat<B>
             return if y.sign { -pi } else { pi };
         }
 
-        return FlexFloat::new_zero_with_sign(y.sign);
+        return FlexFloat::zero_with_sign(y.sign);
     }
 
     if x.is_infinite() {
@@ -496,7 +559,7 @@ pub fn atan2<B: BitArrayArith>(y: FlexFloat<B>, x: FlexFloat<B>) -> FlexFloat<B>
             return if y.sign { -pi } else { pi };
         }
 
-        return FlexFloat::new_zero_with_sign(y.sign);
+        return FlexFloat::zero_with_sign(y.sign);
     }
 
     if x.is_zero() {
@@ -519,7 +582,7 @@ pub fn atan2<B: BitArrayArith>(y: FlexFloat<B>, x: FlexFloat<B>) -> FlexFloat<B>
     }
 }
 
-impl<B: BitArrayArith> FlexFloat<B> {
+impl<Exp: BitArrayArith, Frac: BitArrayArith> FlexFloat<Exp, Frac> {
     /// Returns the sine of the value (in radians).
     ///
     /// This method computes `sin(self)`.
@@ -640,6 +703,52 @@ impl<B: BitArrayArith> FlexFloat<B> {
     pub fn atan2(self, x: Self) -> Self {
         atan2(self, x)
     }
+
+    /// Computes sine and cosine simultaneously, sharing the range-reduction pass.
+    ///
+    /// More efficient than calling `sin` and `cos` separately.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use flexfloat::prelude::*;
+    /// use flexfloat::math;
+    ///
+    /// let x = FlexFloat::from(core::f64::consts::PI / 4.0);
+    /// let (s, c) = x.sin_cos();
+    /// let expected = FlexFloat::from(core::f64::consts::FRAC_1_SQRT_2);
+    /// assert_ff_almost_eq!(s, expected);
+    /// assert_ff_almost_eq!(c, expected);
+    /// ```
+    pub fn sin_cos(self) -> (Self, Self) {
+        sin_cos(self)
+    }
+}
+
+/// Computes `(sin(value), cos(value))` in a single range-reduction pass.
+///
+/// # Examples
+///
+/// ```rust
+/// use flexfloat::prelude::*;
+/// use flexfloat::math::sin_cos;
+///
+/// let x = FlexFloat::from(0.0);
+/// let (s, c) = sin_cos(x);
+/// assert_ff_almost_eq!(s, FlexFloat::from(0.0));
+/// assert_ff_almost_eq!(c, FlexFloat::from(1.0));
+/// ```
+pub fn sin_cos<Exp: BitArrayArith, Frac: BitArrayArith>(
+    value: FlexFloat<Exp, Frac>,
+) -> (FlexFloat<Exp, Frac>, FlexFloat<Exp, Frac>) {
+    if value.is_nan() || value.is_infinite() {
+        return (FlexFloat::nan(), FlexFloat::nan());
+    }
+    if value.is_zero() {
+        return (value, consts::ONE.convert_to());
+    }
+
+    sin_cos_reduced(value)
 }
 
 #[cfg(test)]
@@ -648,8 +757,8 @@ mod tests {
     use rand::Rng;
     use rstest::rstest;
 
-    use crate::FlexFloat;
-    use crate::tests::*;
+    use crate::flexfloat::FlexFloat;
+    use crate::test_support::*;
 
     /// Tests the sin operation for FlexFloat.
     #[rstest]
