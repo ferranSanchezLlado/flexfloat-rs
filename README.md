@@ -19,7 +19,7 @@ FlexFloat automatically adapts to the scale of your computations:
 
 ```toml
 [dependencies]
-flexfloat = "0.1.1"
+flexfloat = "1.0.1"
 ```
 
 ```rust
