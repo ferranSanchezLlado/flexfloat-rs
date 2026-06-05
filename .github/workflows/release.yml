@@ -95,6 +95,7 @@ jobs:
           GIT_COMMITTER_NAME: github-actions
           GIT_COMMITTER_EMAIL: github-actions@github.com
         run: |
+          git pull --rebase origin main
           git add Cargo.toml README.md CHANGELOG.md Cargo.lock
           git commit -m "Release v${{ inputs.version }}"
 
