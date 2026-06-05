@@ -19,16 +19,26 @@ FlexFloat automatically adapts to the scale of your computations:
 
 ```toml
 [dependencies]
-flexfloat = "1.0.0"
+flexfloat = "0.1.1"
 ```
 
 ```rust
 use flexfloat::prelude::*;
 
-let radius = FlexFloat::from(3.0_f64);
-let circumference = radius * FlexFloat::from(core::f64::consts::TAU);
-assert_ff_almost_eq!(circumference, FlexFloat::from(18.84955592153876));
+// Works like f64 — use From to construct, then standard operators
+let a = FlexFloat::from(f64::MAX);
+let b = FlexFloat::from(f64::MAX);
+let huge = a * b;
+
+// Unlike f64, this never overflows to inf — the range grows automatically
+assert!(!huge.is_infinite());
+
+// Convert back to f64 when you need to; returns Err if the value no longer fits
+let result: Result<f64, _> = huge.try_into();
+assert!(result.is_err());
 ```
+
+See the [`examples/`](examples/) directory for more (`cargo run --example <name>`).
 
 ## Conversions
 
