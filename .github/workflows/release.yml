@@ -46,8 +46,30 @@ jobs:
       - name: Bump versioned files
         run: bash scripts/bump-version.sh "${{ inputs.version }}"
 
-      - name: Verify changelog entry exists for release version
-        run: grep -q "^## \[${{ inputs.version }}\]" CHANGELOG.md
+      - name: Generate changelog entry if missing
+        run: |
+          version="${{ inputs.version }}"
+          if grep -q "^## \[${version}\]" CHANGELOG.md; then
+            echo "Changelog entry for ${version} already exists, skipping generation."
+          else
+            echo "No changelog entry found for ${version}, generating from commits..."
+            # Find the most recent release tag to use as the log base
+            prev_tag=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+            if [ -n "$prev_tag" ]; then
+              log_range="${prev_tag}..HEAD"
+              echo "Collecting commits since ${prev_tag}"
+            else
+              log_range="HEAD"
+              echo "No previous tag found, collecting all commits"
+            fi
+            # Build the entry body from commit subjects (skip merge commits and version bumps)
+            entry=$(git log "$log_range" --pretty=format:"- %s" --no-merges \
+              | grep -v "^- Release v" || true)
+            today=$(date -u +%Y-%m-%d)
+            entry_block="## [${version}] - ${today}"$'\n'"${entry}"
+            # Insert after the [Unreleased] line
+            sed -i "s|^## \[Unreleased\]|## [Unreleased]\n\n${entry_block}|" CHANGELOG.md
+          fi
 
       - name: Validate crate metadata
         run: cargo metadata --no-deps --format-version 1 > /dev/null
@@ -89,3 +111,20 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ inputs.version }}"
+          # Extract the body of the changelog entry for this version:
+          # everything between "## [version]" and the next "## [" heading
+          notes=$(awk "/^## \[${version}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md \
+            | sed '/^[[:space:]]*$/d' | head -50)
+          if [ -z "$notes" ]; then
+            notes="See [CHANGELOG.md](CHANGELOG.md) for details."
+          fi
+          gh release create "v${version}" \
+            --title "v${version}" \
+            --notes "${notes}" \
+            --verify-tag

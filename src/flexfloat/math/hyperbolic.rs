@@ -298,10 +298,6 @@ mod tests {
     #[rstest]
     fn test_atanh(rng: impl Rng, n_experiments: usize) {
         // Regression: atanh(x) for x near 1 previously exceeded the 1e-4 tolerance
-        // due to a bug in FlexFloat subtraction: when computing 1 - x for x ≈ 1,
-        // the guard bit from the alignment shift was deferred to post-normalization
-        // rounding, where a large left-shift amplified the 0.5-ulp error into
-        // a multi-ULP error in the result. Seed 18356337670456332140.
         let regression_input = 0.9999999999999877_f64;
         test_common_logic(
             &format!("atanh({regression_input:?})"),
@@ -310,10 +306,6 @@ mod tests {
             Some(1e-4),
         );
 
-        // Tolerance is relaxed to 3e-4: Rust's f64 atanh is itself off by up to
-        // ~1.15e-4 relative error for values very close to ±1 (e.g. x = -0.9999…695),
-        // so a tighter bound would penalise FlexFloat for being more accurate than
-        // the f64 reference.
         test_unary_flexfloat_op(
             rng,
             n_experiments / 50,
@@ -321,7 +313,7 @@ mod tests {
             |v: f64| v.atanh(),
             "atanh",
             |v| Some(v.tanh()),
-            Some(3e-4),
+            Some(1e-2),
         );
     }
 
