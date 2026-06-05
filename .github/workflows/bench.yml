@@ -45,6 +45,17 @@ jobs:
         shell: bash
         run: bash scripts/criterion-to-bencher.sh target/criterion | tee bench_output.txt
 
+      - name: Ensure gh-pages branch exists
+        shell: bash
+        run: |
+          if ! git ls-remote --exit-code origin gh-pages; then
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Initialize gh-pages"
+            git push origin gh-pages
+            git checkout -
+          fi
+
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
