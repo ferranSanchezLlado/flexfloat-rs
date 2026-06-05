@@ -126,5 +126,4 @@ jobs:
           fi
           gh release create "v${version}" \
             --title "v${version}" \
-            --notes "${notes}" \
-            --verify-tag
+            --notes "${notes}"
