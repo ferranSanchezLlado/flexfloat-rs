@@ -102,7 +102,7 @@ jobs:
         run: cargo publish --dry-run
 
       - name: Create release tag
-        run: git tag "v${{ inputs.version }}"
+        run: git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
 
       - name: Push release commit and tag
         run: git push origin HEAD:main --follow-tags
