@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780911408386,
+  "lastUpdate": 1780913177618,
   "repoUrl": "https://github.com/ferranSanchezLlado/flexfloat-rs",
   "entries": {
     "FlexFloat (windows-latest)": [
@@ -347,6 +347,354 @@ window.BENCHMARK_DATA = {
             "name": "flexfloat_usize/to_f64",
             "value": 2227595,
             "range": "± 129907",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "31955699+ferranSanchezLlado@users.noreply.github.com",
+            "name": "Ferran Sanchez Llado",
+            "username": "ferranSanchezLlado"
+          },
+          "committer": {
+            "email": "31955699+ferranSanchezLlado@users.noreply.github.com",
+            "name": "Ferran Sanchez Llado",
+            "username": "ferranSanchezLlado"
+          },
+          "distinct": true,
+          "id": "aa0236a59280a69bdd8b96dd53f7a672a5719a17",
+          "message": "ci: pull --rebase before modifying files to avoid unstaged-changes error",
+          "timestamp": "2026-06-08T11:42:47+02:00",
+          "tree_id": "bdbbb90bbdfccbb3798467f5594b23e4f72e78b7",
+          "url": "https://github.com/ferranSanchezLlado/flexfloat-rs/commit/aa0236a59280a69bdd8b96dd53f7a672a5719a17"
+        },
+        "date": 1780913175013,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "agm_pi/boolbitarray",
+            "value": 2603043,
+            "range": "± 48908",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "agm_pi/f64_baseline",
+            "value": 33,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "agm_pi/usizebitarray",
+            "value": 1183199,
+            "range": "± 13713",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/append_repeated/1024",
+            "value": 32735,
+            "range": "± 3634",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/append_repeated/256",
+            "value": 25071,
+            "range": "± 474",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/append_repeated/64",
+            "value": 22732,
+            "range": "± 408",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/from_bits/1024",
+            "value": 11995,
+            "range": "± 216",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/from_bits/256",
+            "value": 10407,
+            "range": "± 1337",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/from_bits/64",
+            "value": 8607,
+            "range": "± 124",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/from_bytes/1024",
+            "value": 221335,
+            "range": "± 7641",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/from_bytes/256",
+            "value": 62940,
+            "range": "± 2204",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/from_bytes/64",
+            "value": 21410,
+            "range": "± 403",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/get_range/1024",
+            "value": 13517,
+            "range": "± 246",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/get_range/256",
+            "value": 11601,
+            "range": "± 134",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/get_range/64",
+            "value": 11395,
+            "range": "± 228",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/shift_fixed/1024",
+            "value": 16864,
+            "range": "± 642",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/shift_fixed/256",
+            "value": 10651,
+            "range": "± 555",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/shift_fixed/64",
+            "value": 9773,
+            "range": "± 232",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/to_bytes/1024",
+            "value": 150034,
+            "range": "± 4076",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/to_bytes/256",
+            "value": 42799,
+            "range": "± 1055",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_bool/to_bytes/64",
+            "value": 16921,
+            "range": "± 1189",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/append_repeated/1024",
+            "value": 24033,
+            "range": "± 533",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/append_repeated/256",
+            "value": 22651,
+            "range": "± 199",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/append_repeated/64",
+            "value": 24331,
+            "range": "± 1757",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/from_bits/1024",
+            "value": 193420,
+            "range": "± 8494",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/from_bits/256",
+            "value": 58233,
+            "range": "± 1562",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/from_bits/64",
+            "value": 27183,
+            "range": "± 592",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/from_bytes/1024",
+            "value": 9989,
+            "range": "± 128",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/from_bytes/256",
+            "value": 9323,
+            "range": "± 140",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/from_bytes/64",
+            "value": 9345,
+            "range": "± 199",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/get_range/1024",
+            "value": 11954,
+            "range": "± 126",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/get_range/256",
+            "value": 11692,
+            "range": "± 867",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/get_range/64",
+            "value": 11694,
+            "range": "± 338",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/shift_fixed/1024",
+            "value": 467587,
+            "range": "± 5501",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/shift_fixed/256",
+            "value": 117193,
+            "range": "± 4158",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/shift_fixed/64",
+            "value": 29453,
+            "range": "± 1273",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/to_bytes/1024",
+            "value": 9596,
+            "range": "± 398",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/to_bytes/256",
+            "value": 9191,
+            "range": "± 118",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "bitarray_usize/to_bytes/64",
+            "value": 9239,
+            "range": "± 781",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_bool/add",
+            "value": 4971676,
+            "range": "± 562327",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_bool/from_f64",
+            "value": 645328,
+            "range": "± 14776",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_bool/mul",
+            "value": 6868839,
+            "range": "± 161923",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_bool/sqrt",
+            "value": 467075062,
+            "range": "± 16382238",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_bool/to_f64",
+            "value": 659972,
+            "range": "± 12349",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_f64_baseline/add",
+            "value": 4659,
+            "range": "± 95",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_f64_baseline/from_f64",
+            "value": 2329,
+            "range": "± 71",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_f64_baseline/mul",
+            "value": 4700,
+            "range": "± 137",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_f64_baseline/sqrt",
+            "value": 10343,
+            "range": "± 193",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_f64_baseline/to_f64",
+            "value": 2300,
+            "range": "± 68",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_usize/add",
+            "value": 4321168,
+            "range": "± 102185",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_usize/from_f64",
+            "value": 467577,
+            "range": "± 15939",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_usize/mul",
+            "value": 4933651,
+            "range": "± 55799",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_usize/sqrt",
+            "value": 287207770,
+            "range": "± 5664216",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "flexfloat_usize/to_f64",
+            "value": 1682854,
+            "range": "± 31935",
             "unit": "ns/iter"
           }
         ]
