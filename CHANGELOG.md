@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [1.1.0] - TBD
+
 ### Breaking changes
 
 - **`to_le_bytes` / `to_be_bytes`** now return `(Vec<u8>, usize, usize)` — the third element is
