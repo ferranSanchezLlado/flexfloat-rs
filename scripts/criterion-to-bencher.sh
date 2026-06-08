@@ -30,14 +30,15 @@ find "$criterion_dir" -path "*/new/estimates.json" | sort | while read -r file; 
   name="$path"
 
   # Extract mean and std_dev using python3 (available on all GitHub runners)
+  # Use PYTHONIOENCODING and explicit \n to avoid CRLF on Windows runners.
   read -r mean_int std_int < <(python3 -c "
 import json, sys
 with open('$file') as f:
     d = json.load(f)
 mean = d['mean']['point_estimate']
 std  = d['std_dev']['point_estimate']
-print(round(mean), round(std))
-")
+sys.stdout.write(str(round(mean)) + ' ' + str(round(std)) + '\n')
+" | tr -d '\r')
 
   echo "test ${name} ... bench:        ${mean_int} ns/iter (+/- ${std_int})"
 done

@@ -49,8 +49,8 @@ fn main() {
     // --- Byte serialisation round-trip ---
     println!("\nByte serialisation round-trip:");
     let original = FlexFloat::from(1.23_f64);
-    let (le_bytes, exp_bits) = original.to_le_bytes();
-    let restored = FlexFloat::from_le_bytes(&le_bytes, exp_bits);
+    let (le_bytes, exp_bits, frac_bits) = original.to_le_bytes();
+    let restored = FlexFloat::from_le_bytes(&le_bytes, exp_bits, frac_bits);
     println!("  original  = {original}");
     println!("  restored  = {restored}");
     println!("  equal     = {}", original == restored);

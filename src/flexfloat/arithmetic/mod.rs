@@ -6,22 +6,28 @@
 //! ## Overview
 //!
 //! This module provides arithmetic operations that maintain FlexFloat's key
-//! characteristics: growing exponents when needed and consistent precision
-//! through the fixed-width fraction field.
+//! characteristics: growing exponents (and fractions) when needed to avoid
+//! overflow, while preserving the full precision of both operands.
 //!
 //! ## Exponent Growth Strategy
 //!
 //! When arithmetic operations produce results that exceed the current exponent
-//! range, the exponent field automatically grows to accommodate the new value.
-//! This ensures that FlexFloat can represent arbitrarily large or small numbers
-//! without overflow.
+//! range, both the exponent and fraction fields grow together to accommodate the
+//! new value.  This ensures that FlexFloat can represent arbitrarily large or
+//! small numbers without overflow.
 //!
 //! ## Implemented Operations
 //!
 //! - **Negation**: Sign bit flipping with `Neg` trait
 //! - **Absolute value**: Sign bit clearing
-//! - **Addition/Subtraction**: With automatic exponent expansion
+//! - **Addition/Subtraction**: With automatic exponent/fraction growth
 //! - **Multiplication/Division**: With precision preservation
+//! - **Remainder**: `Rem` / `rem_euclid` / `div_euclid`
+//! - **Aggregation**: `Sum` and `Product` for iterators
+//!
+//! Internal shared helpers live in the `normalize` sub-module
+//! (`align_mantissa`, `ensure_width`, `extract_mantissa_and_exponent`,
+//! `build_finite_result`).
 //!
 //! ## Examples
 //!

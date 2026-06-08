@@ -62,15 +62,15 @@
 //! All standard transcendental functions are available through the [`math`] module and as
 //! methods:
 //!
-//! | Function | Method | Free fn |
-//! |---|---|---|
-//! | Exponential | `.exp()` | `math::exp` |
-//! | Natural log | `.ln()` | `math::ln` |
-//! | Square root | `.sqrt()` | `math::sqrt` |
-//! | Trigonometry | `.sin()`, `.cos()`, `.tan()`, … | `math::sin`, … |
-//! | Hyperbolic | `.sinh()`, `.cosh()`, `.tanh()`, … | `math::sinh`, … |
-//! | Rounding | `.round()`, `.floor()`, `.ceil()`, `.round_ties_even()` | `math::round`, … |
-//! | Simultaneous | `.sin_cos()` | `math::sin_cos` |
+//! | Function     | Method                                              | Free fn          |
+//! |--------------|-----------------------------------------------------|------------------|
+//! | Exponential  | `.exp()`                                            | `math::exp`      |
+//! | Natural log  | `.ln()`                                             | `math::ln`       |
+//! | Square root  | `.sqrt()`                                           | `math::sqrt`     |
+//! | Trigonometry | `.sin()`, `.cos()`, `.tan()`, …                     | `math::sin`, …   |
+//! | Hyperbolic   | `.sinh()`, `.cosh()`, `.tanh()`, …                  | `math::sinh`, …  |
+//! | Rounding     | `.round()`, `.floor()`, `.ceil()`, `.round_ties_even()` | `math::round`, … |
+//! | Simultaneous | `.sin_cos()`                                        | `math::sin_cos`  |
 //!
 //! ## Conversions
 //!
@@ -130,13 +130,13 @@
 //!
 //! ## Module map
 //!
-//! | Module | Contents |
-//! |---|---|
-//! | [`bitarray`] | Pluggable bit-array backends (`BoolBitArray`, `UsizeBitArray`, `StaticBitArray<N>`) |
-//! | [`flexfloat`] | Core `FlexFloat<Exp, Frac>` struct and all operation impls |
-//! | [`flexfloat::math`] | Transcendental / rounding functions |
-//! | [`flexfloat::consts`] | Compile-time math constants (`PI`, `E`, `TAU`, …) |
-//! | [`flexfloat::error`] | `FlexFloatToF64Error`, `FlexFloatToIntError`, `ConversionError` |
+//! | Module                  | Contents                                                                          |
+//! |-------------------------|-----------------------------------------------------------------------------------|
+//! | [`bitarray`]            | Pluggable bit-array backends (`BoolBitArray`, `UsizeBitArray`, `StaticBitArray<N>`) |
+//! | [`flexfloat`]           | Core `FlexFloat<Exp, Frac>` struct and all operation impls                        |
+//! | [`flexfloat::math`]     | Transcendental / rounding functions                                               |
+//! | [`flexfloat::consts`]   | Compile-time math constants (`PI`, `E`, `TAU`, …)                                 |
+//! | [`flexfloat::error`]    | `FlexFloatToF64Error`, `FlexFloatToIntError`, `ConversionError`                   |
 
 pub mod bitarray;
 pub mod flexfloat;

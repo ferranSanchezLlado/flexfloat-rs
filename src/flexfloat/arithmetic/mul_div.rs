@@ -1,4 +1,10 @@
 //! Multiplication and division kernels.
+//!
+//! Both kernels widen operand mantissas to a common `mant_len` (the larger of the two
+//! operand widths) via [`align_mantissa`] before computing, so grown-format values
+//! retain their extra precision throughout.  The result is assembled by
+//! [`build_finite_result`], which may further grow the exponent and fraction fields if
+//! the output exceeds the IEEE 754 double-precision exponent range.
 
 use core::cmp::max;
 use core::ops::{Div, Mul};
@@ -9,13 +15,15 @@ use crate::bitarray::traits::{BitArrayRounding, ShiftRoundingInfo};
 use crate::bitarray::{BitArrayArith, BitArrayConversion};
 use crate::flexfloat::FlexFloat;
 use crate::flexfloat::arithmetic::normalize::{
-    build_finite_result, ensure_width, extract_mantissa_and_exponent,
+    align_mantissa, build_finite_result, ensure_width, extract_mantissa_and_exponent,
 };
 
 /// Multiplication operation for `FlexFloat`.
 ///
 /// Implements the [`Mul`] trait for FlexFloat, performing floating-point multiplication
-/// with automatic exponent growth and precision preservation.
+/// with automatic exponent growth and precision preservation.  Both operands are
+/// widened to a common mantissa length before multiplying, so grown-format values
+/// (with more than 52 fraction bits) are not silently truncated.
 ///
 /// # Examples
 ///
@@ -33,7 +41,7 @@ impl<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayConversion, F2: BitArrayC
 
     fn mul(self, rhs: FlexFloat<E2, F2>) -> Self::Output {
         let rhs: FlexFloat<E1, F1> = rhs.convert_to();
-        // 0. Handle special cases (NaN, Infinity).
+        // Handle special cases (NaN, Infinity).
         if self.is_nan() || rhs.is_nan() {
             return Self::nan();
         }
@@ -53,48 +61,57 @@ impl<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayConversion, F2: BitArrayC
 
         let (mant_self, exp_self) = extract_mantissa_and_exponent(&self);
         let (mant_rhs, exp_rhs) = extract_mantissa_and_exponent(&rhs);
-        let mut exp_res = exp_self + exp_rhs;
 
+        // Work at the precision of the larger operand.  Both mantissas are
+        // left-aligned so their implicit leading 1 sits at bit `mant_len - 1`.
+        let mant_len = max(mant_self.len(), mant_rhs.len());
+        let msb_idx = mant_len - 1; // index of the implicit leading 1
+        let mant_self = align_mantissa(mant_self, mant_len);
+        let mant_rhs = align_mantissa(mant_rhs, mant_len);
+
+        let mut exp_res = exp_self + exp_rhs;
         let mut mant_res = mant_self * mant_rhs;
 
-        let msb_pos = mant_res.iter_bits().rposition(|b| b).unwrap();
+        // The product of two `mant_len`-bit numbers has up to `2*mant_len` bits.
+        // Normalise so the MSB sits at `msb_idx` and adjust the exponent accordingly.
+        let product_msb = mant_res.iter_bits().rposition(|b| b).unwrap();
+        exp_res += BigInt::from(product_msb) - BigInt::from(2 * msb_idx);
+        let shift = product_msb as isize - msb_idx as isize;
 
-        let shift_amount = (msb_pos as isize) - 52;
-        exp_res += BigInt::from(msb_pos) - 104;
-
-        let mul_round_info = if shift_amount > 0 {
-            let r = mant_res.shift_right_rounded(shift_amount as usize);
+        let mul_round_info = if shift > 0 {
+            let r = mant_res.shift_right_rounded(shift as usize);
             mant_res = r.value;
             r.info
-        } else if shift_amount < 0 {
-            mant_res = mant_res.shift_fixed(shift_amount);
-            ShiftRoundingInfo::default()
         } else {
+            if shift < 0 {
+                mant_res = mant_res.shift_fixed(shift);
+            }
             ShiftRoundingInfo::default()
         };
 
-        let mut mant_res_53 = ensure_width(mant_res, 53).truncate(53);
+        let mut mant_res_norm = ensure_width(mant_res, mant_len).truncate(mant_len);
 
-        let result_lsb = mant_res_53.get(0).unwrap_or(false);
+        let result_lsb = mant_res_norm.get(0).unwrap_or(false);
         if mul_round_info.should_round_up(result_lsb) {
-            mant_res_53.add_one_in_place();
-            if mant_res_53.len() > 53 {
-                mant_res_53 = mant_res_53.shift_fixed(1).truncate(53);
+            mant_res_norm.add_one_in_place();
+            if mant_res_norm.len() > mant_len {
+                mant_res_norm = mant_res_norm.shift_fixed(1).truncate(mant_len);
                 exp_res += 1_u8;
             }
         }
 
-        // 7. Grow exponent if necessary (no limit on size)
-        let exp_res = exp_res - 1_u8;
         let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
-        build_finite_result(sign, exp_res, max_exp_len, mant_res_53)
+        build_finite_result(sign, exp_res - 1_u8, max_exp_len, mant_res_norm)
     }
 }
 
 /// Division operation for `FlexFloat`.
 ///
 /// Implements the [`Div`] trait for FlexFloat, performing floating-point division
-/// with automatic exponent growth and precision preservation.
+/// with automatic exponent growth and precision preservation.  Both operands are
+/// widened to a common mantissa length before dividing, so grown-format values
+/// retain their extra precision.  Three extra guard bits are carried through the
+/// integer division to allow correct round-to-nearest-even.
 ///
 /// # Examples
 ///
@@ -112,7 +129,7 @@ impl<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayConversion, F2: BitArrayC
 
     fn div(self, rhs: FlexFloat<E2, F2>) -> Self::Output {
         let rhs: FlexFloat<E1, F1> = rhs.convert_to();
-        // 0. Handle special cases (NaN, Infinity).
+        // Handle special cases (NaN, Infinity, zero denominator).
         if self.is_nan() || rhs.is_nan() {
             return Self::nan();
         }
@@ -121,7 +138,7 @@ impl<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayConversion, F2: BitArrayC
             if self.is_zero() {
                 return Self::nan(); // 0 / 0 = NaN
             }
-            return Self::infinity(self.sign ^ rhs.sign); // x / 0 = inf
+            return Self::infinity(self.sign ^ rhs.sign); // x / 0 = ±∞
         }
 
         let sign = self.sign ^ rhs.sign;
@@ -131,63 +148,69 @@ impl<E1: BitArrayArith, F1: BitArrayArith, E2: BitArrayConversion, F2: BitArrayC
 
         if self.is_infinite() {
             if rhs.is_infinite() {
-                return Self::nan(); // inf / inf = NaN
+                return Self::nan(); // ∞ / ∞ = NaN
             }
             return Self::infinity(sign);
         }
 
         if rhs.is_infinite() {
-            return Self::zero_with_sign(sign); // x / inf = 0
+            return Self::zero_with_sign(sign); // x / ∞ = 0
         }
 
         let (mant_self, exp_self) = extract_mantissa_and_exponent(&self);
         let (mant_rhs, exp_rhs) = extract_mantissa_and_exponent(&rhs);
-        // Compute a few extra quotient bits so normalization can still observe
-        // guard/round/sticky information instead of rounding a pre-truncated
-        // integer quotient.
+
+        // Work at the precision of the larger operand.  Both mantissas are
+        // left-aligned so their implicit leading 1 sits at bit `mant_len - 1`.
+        let mant_len = max(mant_self.len(), mant_rhs.len());
+        let msb_idx = mant_len - 1; // index of the implicit leading 1
+        let mant_self = align_mantissa(mant_self, mant_len);
+        let mant_rhs = align_mantissa(mant_rhs, mant_len);
+
+        // Pre-shift the numerator so the integer quotient carries a few extra
+        // guard/round/sticky bits for correct rounding.
         const DIV_EXTRA_BITS: isize = 3;
-        let mant_self_msb = mant_self.iter_bits().rposition(|b| b).unwrap();
-        let mant_rhs_msb = mant_rhs.iter_bits().rposition(|b| b).unwrap();
-        let quotient_shift = 52 + DIV_EXTRA_BITS + mant_rhs_msb as isize - mant_self_msb as isize;
-        let mut exp_res = exp_self - exp_rhs - BigInt::from(quotient_shift - 52);
+        let self_msb = mant_self.iter_bits().rposition(|b| b).unwrap();
+        let rhs_msb = mant_rhs.iter_bits().rposition(|b| b).unwrap();
+        let quotient_shift =
+            msb_idx as isize + DIV_EXTRA_BITS + rhs_msb as isize - self_msb as isize;
+        let mut exp_res = exp_self - exp_rhs - BigInt::from(quotient_shift - msb_idx as isize);
         let mut mant_res = mant_self.shift_grow(quotient_shift) / mant_rhs;
 
-        // If result is zero, return signed zero.
         if mant_res.is_zeros() {
             return Self::zero_with_sign(sign);
         }
 
-        // Find MSB position and normalize so the MSB sits at index 52.
-        let msb_pos = mant_res.iter_bits().rposition(|b| b).unwrap();
-        let shift = msb_pos as isize - 52;
+        // Normalise: bring the MSB to `msb_idx`.
+        let product_msb = mant_res.iter_bits().rposition(|b| b).unwrap();
+        let shift = product_msb as isize - msb_idx as isize;
         exp_res += BigInt::from(shift);
 
         let div_round_info = if shift > 0 {
             let r = mant_res.shift_right_rounded(shift as usize);
             mant_res = r.value;
             r.info
-        } else if shift < 0 {
-            mant_res = mant_res.shift_fixed(shift);
-            ShiftRoundingInfo::default()
         } else {
+            if shift < 0 {
+                // Widen before shifting left so no bits are clipped.
+                mant_res = ensure_width(mant_res, mant_len).shift_fixed(shift);
+            }
             ShiftRoundingInfo::default()
         };
 
-        let mut mant_res_final = ensure_width(mant_res, 53).truncate(53);
+        let mut mant_res_final = ensure_width(mant_res, mant_len).truncate(mant_len);
 
         let result_lsb = mant_res_final.get(0).unwrap_or(false);
         if div_round_info.should_round_up(result_lsb) {
             mant_res_final.add_one_in_place();
-            if mant_res_final.len() > 53 {
-                mant_res_final = mant_res_final.shift_fixed(1).truncate(53);
+            if mant_res_final.len() > mant_len {
+                mant_res_final = mant_res_final.shift_fixed(1).truncate(mant_len);
                 exp_res += 1_u8;
             }
         }
 
-        // 7. Grow exponent if necessary (no limit on size)
-        let exp_res = exp_res - 1_u8;
         let max_exp_len = max(self.exponent.len(), rhs.exponent.len());
-        build_finite_result(sign, exp_res, max_exp_len, mant_res_final)
+        build_finite_result(sign, exp_res - 1_u8, max_exp_len, mant_res_final)
     }
 }
 
@@ -213,12 +236,46 @@ mod tests {
         let c = FlexFloat::from(a) * FlexFloat::from(b);
         assert_eq!(c.to_f64(), Some(a * b));
 
-        // Test overflow case
+        // Test overflow case: exponent AND fraction must grow together.
+        // e=12 => best_n=128 => target_frac = 128 - 12 - 1 = 115 bits.
         let a = f64::MAX;
         let b = 100.0;
         let c = FlexFloat::from(a) * FlexFloat::from(b);
         assert!(!c.is_infinite(), "Result should not overflow");
-        assert!(c.exponent.len() > 11, "Exponent should have grown");
+        assert_eq!(
+            c.exponent.len(),
+            12,
+            "Exponent should have grown to 12 bits"
+        );
+        assert_eq!(
+            c.fraction.len(),
+            115,
+            "Fraction should have grown to 115 bits alongside exponent"
+        );
+
+        // Precision round-trip: (f64::MAX * 100) / 100 ≈ f64::MAX within 1 ULP.
+        let roundtrip = c / FlexFloat::from(100.0_f64);
+        let rt_f64 = roundtrip.to_f64().expect("round-trip must be in f64 range");
+        let rel = (rt_f64 - f64::MAX).abs() / f64::MAX;
+        assert!(rel < 1e-14, "round-trip lost precision: rel={rel:.2e}");
+
+        // grown * normal: fraction must remain grown (115 bits).
+        let grown = FlexFloat::from(f64::MAX) * FlexFloat::from(100.0_f64);
+        let grown_times_two = grown * FlexFloat::from(2.0_f64);
+        assert_eq!(
+            grown_times_two.fraction.len(),
+            115,
+            "grown * normal fraction should stay 115 bits"
+        );
+
+        // grown / normal: fraction must remain grown.
+        let grown = FlexFloat::from(f64::MAX) * FlexFloat::from(100.0_f64);
+        let grown_div = grown / FlexFloat::from(3.0_f64);
+        assert_eq!(
+            grown_div.fraction.len(),
+            115,
+            "grown / normal fraction should stay 115 bits"
+        );
 
         let a = -5.18059e300;
         let b = 1.97397e-308;
@@ -267,12 +324,27 @@ mod tests {
         let c = FlexFloat::from(a) / FlexFloat::from(b);
         assert_almost_eq(c.to_f64().unwrap(), a / b, "");
 
-        // Test overflow case
+        // Test overflow case: exponent AND fraction must grow together.
         let a = f64::MAX;
         let b = 1e-100;
         let c = FlexFloat::from(a) / FlexFloat::from(b);
         assert!(!c.is_infinite(), "Result should not overflow");
-        assert!(c.exponent.len() > 11, "Exponent should have grown");
+        assert_eq!(
+            c.exponent.len(),
+            12,
+            "Exponent should have grown to 12 bits"
+        );
+        assert_eq!(
+            c.fraction.len(),
+            115,
+            "Fraction should have grown to 115 bits"
+        );
+
+        // Precision round-trip: (f64::MAX / 1e-100) * 1e-100 ≈ f64::MAX.
+        let roundtrip = c / FlexFloat::from(1.0_f64 / 1e-100_f64);
+        let rt_f64 = roundtrip.to_f64().expect("round-trip must be in f64 range");
+        let rel = (rt_f64 - f64::MAX).abs() / f64::MAX;
+        assert!(rel < 1e-14, "div round-trip lost precision: rel={rel:.2e}");
 
         let a = f64::from_bits(1);
         let b = 1e-300_f64;

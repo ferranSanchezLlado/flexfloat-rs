@@ -151,23 +151,32 @@ impl<Frac: BitArray, Exp: BitArray> FlexFloat<Exp, Frac> {
         let stored_exponent_value = BigInt::from(bit_length - 1);
         let exponent: Exp = grow_exponent(stored_exponent_value, 11);
 
+        // Determine the target fraction size.
+        // Always use 52 fraction bits for IEEE compatibility.
+        // Math functions (sin, cos, exp, etc.) rely on the 52-bit fraction convention;
+        // from_int is a conversion utility that should match that contract.
+        let target_frac = 52;
+
         // Extract the fractional part (all bits except the MSB)
         let msb_mask = BigUint::one() << bit_length;
         let fraction_bits = &abs_value & (msb_mask - 1u8);
 
         let fraction = Frac::from_biguint(&fraction_bits);
 
-        let missing_zeros = bit_length as usize - fraction.len();
+        let missing_zeros = if bit_length as usize > fraction.len() {
+            bit_length as usize - fraction.len()
+        } else {
+            0
+        };
         let fraction = fraction.append_repeated(false, missing_zeros);
 
-        let RoundedResult { fraction, carry } = truncate_fraction(fraction, 52);
+        let RoundedResult { fraction, carry } = truncate_fraction(fraction, target_frac);
         debug_assert!(
             !carry,
-            "from_int truncate_fraction should never carry (input is already 52 bits)"
+            "from_int truncate_fraction should never carry (input is already target_frac bits)"
         );
 
         debug_assert!(exponent.len() >= 11);
-        debug_assert_eq!(fraction.len(), 52);
 
         Self {
             sign,
@@ -272,7 +281,8 @@ impl<Exp: BitArrayConversion, Frac: BitArrayConversion> FlexFloat<Exp, Frac> {
 
         let is_subnormal = self.exponent.is_zeros();
         let exponent = if is_subnormal {
-            BigInt::from(-1022)
+            // For 11-bit exponent: -(2^10) + 2 = -1022. Generalised: min_exp().
+            self.min_exp()
         } else {
             self.exponent.to_bigint() + 1
         };
@@ -328,47 +338,50 @@ where
 /// Byte-serialisation for `FlexFloat`.
 ///
 /// The layout is: `[sign byte (0 or 1)] ++ exponent_bytes ++ fraction_bytes`.
-/// The returned `usize` is the number of exponent bits, needed to reconstruct the value
-/// via [`FlexFloat::from_le_bytes`] / [`FlexFloat::from_be_bytes`].
+/// The returned tuple `(bytes, exp_bits, frac_bits)` contains the bit counts needed
+/// to reconstruct the value via [`FlexFloat::from_le_bytes`] / [`FlexFloat::from_be_bytes`].
 impl<Exp: BitArrayConversion, Frac: BitArrayConversion> FlexFloat<Exp, Frac> {
     /// Serialise to little-endian bytes.
     ///
-    /// Returns `(bytes, exponent_bits)`. Pass both to [`from_le_bytes`](FlexFloat::from_le_bytes) to reconstruct.
-    pub fn to_le_bytes(&self) -> (Vec<u8>, usize) {
+    /// Returns `(bytes, exp_bits, frac_bits)`. Pass all three to
+    /// [`from_le_bytes`](FlexFloat::from_le_bytes) to reconstruct.
+    pub fn to_le_bytes(&self) -> (Vec<u8>, usize, usize) {
         let mut bytes = vec![u8::from(self.sign)];
         let exp_bits = self.exponent.len();
+        let frac_bits = self.fraction.len();
         let exp_bytes = self.exponent.to_bytes();
         let frac_bytes = self.fraction.to_bytes();
         bytes.extend_from_slice(&exp_bytes);
         bytes.extend_from_slice(&frac_bytes);
-        (bytes, exp_bits)
+        (bytes, exp_bits, frac_bits)
     }
 
     /// Serialise to big-endian bytes.
     ///
-    /// Returns `(bytes, exponent_bits)`. Pass both to [`from_be_bytes`](FlexFloat::from_be_bytes) to reconstruct.
-    pub fn to_be_bytes(&self) -> (Vec<u8>, usize) {
-        let (mut le, exp_bits) = self.to_le_bytes();
+    /// Returns `(bytes, exp_bits, frac_bits)`. Pass all three to
+    /// [`from_be_bytes`](FlexFloat::from_be_bytes) to reconstruct.
+    pub fn to_be_bytes(&self) -> (Vec<u8>, usize, usize) {
+        let (mut le, exp_bits, frac_bits) = self.to_le_bytes();
         // reverse each field independently: sign stays, then flip exp slice and frac slice
         let exp_byte_count = exp_bits.div_ceil(8);
-        let frac_byte_count = 52_usize.div_ceil(8); // fraction is always 52 bits
+        let frac_byte_count = frac_bits.div_ceil(8);
         let exp_start = 1;
         le[exp_start..exp_start + exp_byte_count].reverse();
         le[exp_start + exp_byte_count..exp_start + exp_byte_count + frac_byte_count].reverse();
-        (le, exp_bits)
+        (le, exp_bits, frac_bits)
     }
 }
 
 impl<Frac: BitArrayConstruction, Exp: BitArrayConstruction> FlexFloat<Exp, Frac> {
     /// Deserialise from little-endian bytes produced by [`to_le_bytes`](FlexFloat::to_le_bytes).
-    pub fn from_le_bytes(bytes: &[u8], exp_bits: usize) -> Self {
+    pub fn from_le_bytes(bytes: &[u8], exp_bits: usize, frac_bits: usize) -> Self {
         let sign = bytes[0] != 0;
         let exp_byte_count = exp_bits.div_ceil(8);
-        let frac_byte_count = 52_usize.div_ceil(8);
+        let frac_byte_count = frac_bits.div_ceil(8);
         let exponent = Exp::from_bytes(&bytes[1..1 + exp_byte_count], exp_bits);
         let fraction = Frac::from_bytes(
             &bytes[1 + exp_byte_count..1 + exp_byte_count + frac_byte_count],
-            52,
+            frac_bits,
         );
         Self {
             sign,
@@ -378,13 +391,13 @@ impl<Frac: BitArrayConstruction, Exp: BitArrayConstruction> FlexFloat<Exp, Frac>
     }
 
     /// Deserialise from big-endian bytes produced by [`to_be_bytes`](FlexFloat::to_be_bytes).
-    pub fn from_be_bytes(bytes: &[u8], exp_bits: usize) -> Self {
+    pub fn from_be_bytes(bytes: &[u8], exp_bits: usize, frac_bits: usize) -> Self {
         let exp_byte_count = exp_bits.div_ceil(8);
-        let frac_byte_count = 52_usize.div_ceil(8);
+        let frac_byte_count = frac_bits.div_ceil(8);
         let mut le = bytes.to_vec();
         le[1..1 + exp_byte_count].reverse();
         le[1 + exp_byte_count..1 + exp_byte_count + frac_byte_count].reverse();
-        Self::from_le_bytes(&le, exp_bits)
+        Self::from_le_bytes(&le, exp_bits, frac_bits)
     }
 }
 

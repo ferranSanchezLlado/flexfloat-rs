@@ -55,7 +55,9 @@ pub mod order;
 
 // Re-export the pub(crate) internals so existing paths like
 // `crate::flexfloat::grow_exponent` keep working.
-pub(crate) use internal::{RoundedResult, grow_exponent, truncate_fraction};
+pub(crate) use internal::{
+    RoundedResult, exponent_bits_for_total, grow_exponent, truncate_fraction,
+};
 
 /// A flexible-precision floating-point number with growable exponents.
 ///

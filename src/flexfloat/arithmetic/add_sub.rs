@@ -1,5 +1,36 @@
 //! Addition and subtraction kernels.
+//!
+//! Both operations share the same sign-dispatch pattern:
+//!
+//! - [`add`] checks whether the operand signs differ and, if so, delegates to [`sub`].
+//! - [`sub`] checks whether the operand signs differ and, if so, delegates to [`add`].
+//!
+//! After sign normalisation each kernel handles IEEE 754 special-value cases (NaN,
+//! infinity), then proceeds to the finite path:
+//!
+//! **Addition** (`add`):
+//! 1. Extract normalised mantissas and unbiased exponents via [`extract_mantissa_and_exponent`].
+//! 2. Widen both mantissas to the same bit-length with [`align_mantissa`].
+//! 3. Swap operands if necessary so `lhs` carries the larger exponent.
+//! 4. Right-shift the smaller mantissa by the exponent difference, collecting
+//!    guard/round/sticky bits for later rounding.
+//! 5. Add the aligned mantissas; repair the width with [`ensure_width`].
+//! 6. If the sum overflowed by one bit, right-shift by 1 and increment the exponent.
+//! 7. Apply round-to-nearest-even using the accumulated rounding bits.
+//! 8. Assemble the result with [`build_finite_result`], which handles exponent growth
+//!    and subnormal encoding automatically.
+//!
+//! **Subtraction** (`sub`):
+//! 1–2. Same extraction and widening as addition.
+//! 3. If `|lhs| < |rhs|`, delegate to `sub(&mut rhs, lhs)` and negate.
+//! 4. Shift the smaller mantissa by the (possibly negative) exponent difference.
+//! 5. Extend both mantissas by one guard bit and subtract.
+//! 6. Normalise: left- or right-shift the difference to restore the leading 1,
+//!    adjusting the exponent accordingly.  A zero result returns early.
+//! 7. Drop the guard column and round using the residual bits from step 4.
+//! 8. Assemble with [`build_finite_result`].
 
+use core::cmp::max;
 use core::ops::{Add, Sub};
 
 use num_bigint::BigInt;
@@ -7,7 +38,9 @@ use num_bigint::BigInt;
 use crate::bitarray::traits::{BitArrayRounding, ShiftRoundingInfo, ShiftRoundingResult};
 use crate::bitarray::{BitArrayArith, BitArrayConversion};
 use crate::flexfloat::FlexFloat;
-use crate::flexfloat::arithmetic::normalize::{build_finite_result, extract_mantissa_and_exponent};
+use crate::flexfloat::arithmetic::normalize::{
+    align_mantissa, build_finite_result, ensure_width, extract_mantissa_and_exponent,
+};
 
 pub(super) fn add<Exp: BitArrayArith, Frac: BitArrayArith>(
     lhs: &mut FlexFloat<Exp, Frac>,
@@ -18,23 +51,10 @@ pub(super) fn add<Exp: BitArrayArith, Frac: BitArrayArith>(
         return;
     }
 
-    // OBJECTIVE: Add two FlexFloat instances together.
-    // https://www.sciencedirect.com/topics/computer-science/floating-point-addition
-    // and: https://cse.hkust.edu.hk/~cktang/cs180/notes/lec21.pdf
-    //
-    // Steps:
-    // 0. Handle special cases (NaN, Infinity).
-    // 1. Extract exponent and fraction bits.
-    // 2. Prepend leading 1 to form the mantissa.
-    // 3. Compare exponents.
-    // 4. Shift smaller mantissa if necessary.
-    // 5. Add mantissas.
-    // 6. Normalize mantissa and adjust exponent if necessary.
-    // 7. Grow exponent if necessary. (no limit on size)
-    // 8. Round result.
-    // 9. Return new FlexFloat instance.
-
-    // 0. Handle special cases (NaN, Infinity).
+    // Handle special cases (NaN, Infinity).
+    // References:
+    //   https://www.sciencedirect.com/topics/computer-science/floating-point-addition
+    //   https://cse.hkust.edu.hk/~cktang/cs180/notes/lec21.pdf
     match (lhs.is_nan(), rhs.is_nan()) {
         (true, _) => return,
         (_, true) => return *lhs = rhs,
@@ -42,56 +62,52 @@ pub(super) fn add<Exp: BitArrayArith, Frac: BitArrayArith>(
     }
 
     match (lhs.is_infinite(), rhs.is_infinite(), lhs.sign == rhs.sign) {
-        (true, true, true) => return, // inf + inf = inf
-        (true, true, false) => return *lhs = FlexFloat::nan(), // inf + -inf = NaN
-        (true, false, _) => return,   // inf + x = inf
-        (false, true, _) => return *lhs = rhs, // x + inf = inf
+        (true, true, true) => return,                          // ∞ + ∞ = ∞
+        (true, true, false) => return *lhs = FlexFloat::nan(), // ∞ + -∞ = NaN
+        (true, false, _) => return,                            // ∞ + x = ∞
+        (false, true, _) => return *lhs = rhs,                 // x + ∞ = ∞
         _ => {}
     }
 
-    // 1. Extract exponent and fraction bits.
-    // 2. Prepend leading 1 to form the mantissa.
-    // 3. Compare exponents.
+    // Extract mantissas and align to the same bit-width, with the implicit
+    // leading 1 at the MSB (bit `mant_len - 1`).
     let (lhs_mantissa, mut exp_lhs) = extract_mantissa_and_exponent(lhs);
     let (rhs_mantissa, mut exp_rhs) = extract_mantissa_and_exponent(&rhs);
 
-    // Compare to make sure self has the larger exponent.
-    if exp_lhs < exp_rhs {
-        core::mem::swap(lhs, &mut rhs);
-        lhs.fraction = rhs_mantissa;
-        rhs.fraction = lhs_mantissa;
-        core::mem::swap(&mut exp_lhs, &mut exp_rhs);
-    } else {
-        lhs.fraction = lhs_mantissa;
-        rhs.fraction = rhs_mantissa;
-    }
+    let mant_len = max(lhs_mantissa.len(), rhs_mantissa.len());
+    let mut mant_lhs = align_mantissa(lhs_mantissa, mant_len);
+    let mut mant_rhs_aligned = align_mantissa(rhs_mantissa, mant_len);
 
-    // 4. Shift smaller mantissa if necessary.
-    let exp_diff = &exp_lhs - exp_rhs;
-    assert!(
-        exp_diff >= BigInt::ZERO,
-        "Self exponent should be larger/equal"
-    );
-    let saturation: usize = rhs.fraction.len() + 64;
-    let exp_diff_usize: usize = exp_diff.try_into().unwrap_or(saturation);
+    // Ensure lhs carries the larger exponent so we always shift rhs right.
+    if exp_lhs < exp_rhs {
+        core::mem::swap(&mut mant_lhs, &mut mant_rhs_aligned);
+        core::mem::swap(&mut exp_lhs, &mut exp_rhs);
+        // Keep `lhs` metadata (sign, exponent width) pointing at the larger operand.
+        core::mem::swap(lhs, &mut rhs);
+    }
+    debug_assert!(exp_lhs >= exp_rhs, "lhs exponent must be >= rhs after swap");
+
+    // Align rhs by shifting right by the exponent difference.
+    let exp_diff = &exp_lhs - &exp_rhs;
+    let saturation = mant_len + 64;
+    let shift: usize = exp_diff.try_into().unwrap_or(saturation);
     let ShiftRoundingResult {
         value: mant_rhs,
         info: align_info,
-    } = rhs.fraction.shift_right_rounded(exp_diff_usize);
+    } = mant_rhs_aligned.shift_right_rounded(shift);
 
-    assert_eq!(lhs.fraction.len(), 53, "Mantissa length should be 53 bits");
-    assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
+    // Add mantissas.  BitArray addition may shrink the array if the MSB is zero;
+    // `ensure_width` restores the expected width.
+    let mut mantissa_result = ensure_width(mant_lhs + mant_rhs, mant_len);
 
-    // 5. Add mantissas.
-    let mut mantissa_result = lhs.fraction.clone() + mant_rhs;
-    // 6. Normalize mantissa and adjust exponent if necessary.
+    // If the sum overflowed by 1 bit, right-shift and increment the exponent.
     let mut rounding_info = align_info;
-    if mantissa_result.len() > 53 {
+    if mantissa_result.len() > mant_len {
         let ShiftRoundingResult {
             value: shifted,
             info: norm_info,
         } = mantissa_result.shift_right_rounded(1);
-        mantissa_result = shifted.truncate(53);
+        mantissa_result = shifted.truncate(mant_len);
         exp_lhs += 1_u8;
         rounding_info = rounding_info.combine(norm_info);
     }
@@ -99,13 +115,12 @@ pub(super) fn add<Exp: BitArrayArith, Frac: BitArrayArith>(
     let result_lsb = mantissa_result.get(0).unwrap_or(false);
     if rounding_info.should_round_up(result_lsb) {
         mantissa_result.add_one_in_place();
-        if mantissa_result.len() > 53 {
-            mantissa_result = mantissa_result.shift_fixed(1).truncate(53);
+        if mantissa_result.len() > mant_len {
+            mantissa_result = mantissa_result.shift_fixed(1).truncate(mant_len);
             exp_lhs += 1_u8;
         }
     }
 
-    // 7. Grow exponent if necessary. (no limit on size)
     *lhs = build_finite_result(
         lhs.sign,
         exp_lhs - 1_u8,
@@ -116,17 +131,15 @@ pub(super) fn add<Exp: BitArrayArith, Frac: BitArrayArith>(
 
 pub(super) fn sub<Exp: BitArrayArith, Frac: BitArrayArith>(
     lhs: &mut FlexFloat<Exp, Frac>,
-    mut rhs: FlexFloat<Exp, Frac>,
+    rhs: FlexFloat<Exp, Frac>,
 ) {
-    use num_bigint::Sign;
-
     if lhs.sign != rhs.sign {
         // a - (-b) == a + b
         add(lhs, -rhs);
         return;
     }
 
-    // 0. Handle special cases (NaN, Infinity).
+    // Handle special cases (NaN, Infinity).
     match (lhs.is_nan(), rhs.is_nan()) {
         (true, _) => return,
         (_, true) => return *lhs = rhs,
@@ -134,14 +147,14 @@ pub(super) fn sub<Exp: BitArrayArith, Frac: BitArrayArith>(
     }
 
     match (lhs.is_infinite(), rhs.is_infinite(), lhs.sign == rhs.sign) {
-        (true, true, true) => return *lhs = FlexFloat::nan(), // inf - inf = NaN
-        (true, true, false) => return,                        // inf - -inf = inf
-        (true, false, _) => return,                           // inf - x = inf
-        (false, true, _) => return *lhs = -rhs,               // x - inf = -inf
+        (true, true, true) => return *lhs = FlexFloat::nan(), // ∞ - ∞ = NaN
+        (true, true, false) => return,                        // ∞ - -∞ = ∞
+        (true, false, _) => return,                           // ∞ - x = ∞
+        (false, true, _) => return *lhs = -rhs,               // x - ∞ = -∞
         _ => {}
     }
 
-    // If |lhs| < |rhs|, result is negative of (rhs - lhs)
+    // Guarantee |lhs| >= |rhs| by delegating the reversed case.
     if lhs.abs() < rhs.abs() {
         let mut tmp = rhs;
         sub(&mut tmp, lhs.clone());
@@ -152,81 +165,44 @@ pub(super) fn sub<Exp: BitArrayArith, Frac: BitArrayArith>(
     let (lhs_mantissa, mut exp_lhs) = extract_mantissa_and_exponent(lhs);
     let (rhs_mantissa, exp_rhs) = extract_mantissa_and_exponent(&rhs);
 
-    lhs.fraction = lhs_mantissa;
-    rhs.fraction = rhs_mantissa;
+    let mant_len = max(lhs_mantissa.len(), rhs_mantissa.len());
+    let mant_lhs = align_mantissa(lhs_mantissa, mant_len);
+    let mant_rhs_aligned = align_mantissa(rhs_mantissa, mant_len);
 
-    // 4. Shift smaller mantissa if necessary.
+    // Align rhs by the exponent difference (may be negative if rhs has larger exponent,
+    // but the |lhs| >= |rhs| guarantee above bounds how large the shift can be).
     let exp_diff = exp_lhs.clone() - exp_rhs;
-    let exp_diff_signed: isize = match exp_diff.sign() {
-        Sign::Plus => exp_diff
-            .clone()
-            .try_into()
-            .unwrap_or((rhs.fraction.len() + 64) as isize),
-        Sign::NoSign => 0,
-        Sign::Minus => {
-            -((-exp_diff.clone())
-                .try_into()
-                .unwrap_or((rhs.fraction.len() + 64) as isize))
-        }
-    };
+    let saturation = (mant_len + 64) as isize;
+    let exp_diff_signed: isize = exp_diff.try_into().unwrap_or(saturation);
 
     let (mant_rhs, sub_align_info) = if exp_diff_signed >= 0 {
-        let amount = exp_diff_signed as usize;
-        let r = rhs.fraction.shift_right_rounded(amount);
+        let r = mant_rhs_aligned.shift_right_rounded(exp_diff_signed as usize);
         (r.value, r.info)
     } else {
         (
-            rhs.fraction.shift_fixed(-exp_diff_signed),
+            mant_rhs_aligned.shift_fixed(-exp_diff_signed),
             ShiftRoundingInfo::default(),
         )
     };
 
-    assert_eq!(lhs.fraction.len(), 53, "Mantissa length should be 53 bits");
-    assert_eq!(mant_rhs.len(), 53, "Mantissa length should be 53 bits");
-
-    // 5. Subtract mantissas.
-    //
-    // We work in a 54-bit extended space to incorporate the guard bit from the
-    // alignment shift before normalization, not after.  Deferring the guard-bit
-    // correction to a post-normalization rounding step is incorrect: a large
-    // left-shift during normalization amplifies the 0.5-ulp error into a
-    // multi-ULP error.
-    //
-    // Extended 54-bit representation: we place the 53-bit mantissas in the
-    // upper bits and use bit 0 as the guard column:
-    //
-    //   lhs_54  = append_zero_msb(lhs.fraction) << 1    ← lhs.fraction × 2
-    //   rhs_54  = append_zero_msb(mant_rhs)     << 1
-    //           + guard                                  ← guard column at bit 0
-    //
-    // diff_54 = lhs_54 - rhs_54 = 2 × (lhs.fraction - mant_rhs) − guard,
-    // which is the exact difference at half-LSB resolution.
-    //
-    // After normalization to MSB at bit 53, we extract the 53-bit mantissa
-    // by >> 1 (dropping the now-zero guard column).  The exponent update is
-    // the same as in the original 53-bit algorithm.  The only residual
-    // rounding information is round + sticky (< 0.5 ulp at guard scale).
-    let lhs_54 = lhs
-        .fraction
-        .clone()
-        .append_bool_in_place(false)
-        .shift_fixed(-1);
-    let rhs_54_shifted = mant_rhs.append_bool_in_place(false).shift_fixed(-1);
-    let rhs_54 = if sub_align_info.guard {
-        rhs_54_shifted + Frac::from_bits(&[true]) // + 1 at guard column (bit 0)
+    // Subtract mantissas using a 1-bit guard column at bit 0.
+    let lhs_ext = mant_lhs.append_bool_in_place(false).shift_fixed(-1);
+    let rhs_ext_shifted = mant_rhs.append_bool_in_place(false).shift_fixed(-1);
+    let rhs_ext = if sub_align_info.guard {
+        rhs_ext_shifted + Frac::from_bits(&[true]) // propagate guard bit
     } else {
-        rhs_54_shifted
+        rhs_ext_shifted
     };
 
-    let mut mantissa_result = lhs_54 - rhs_54;
+    let mut mantissa_result = lhs_ext - rhs_ext;
 
-    // Normalise: bring MSB to bit 53 (the MSB of the 54-bit mantissa)
+    // Normalise: bring the MSB to bit `mant_len` (the MSB of the extended mantissa).
     let msb_pos = mantissa_result.iter_bits().rposition(|b| b);
     match msb_pos {
         Some(msb_pos) => {
-            let shift = msb_pos as isize - 53;
+            let shift = msb_pos as isize - mant_len as isize;
             mantissa_result = mantissa_result.shift_fixed(shift);
-            exp_lhs += BigInt::from(shift); // same as original algorithm
+            exp_lhs += BigInt::from(shift);
         }
         None => {
             *lhs = FlexFloat::zero_with_sign(lhs.sign);
@@ -234,27 +210,25 @@ pub(super) fn sub<Exp: BitArrayArith, Frac: BitArrayArith>(
         }
     }
 
-    // Extract 53-bit mantissa (MSB at bit 52) by right-shifting out the guard column.
-    let mut mantissa_result = mantissa_result.shift_fixed(1).truncate(53);
-    {
-        // Only round + sticky remain; guard was already incorporated above.
-        let post_sub_info = ShiftRoundingInfo {
-            guard: sub_align_info.round,
-            round: sub_align_info.sticky,
-            sticky: false,
-        };
-        let result_lsb = mantissa_result.get(0).unwrap_or(false);
-        if post_sub_info.should_round_up(result_lsb) {
-            let mantissa_len = mantissa_result.len();
-            mantissa_result.add_one_in_place();
-            if mantissa_result.len() > mantissa_len {
-                mantissa_result = mantissa_result.shift_fixed(1).truncate(mantissa_len);
-                exp_lhs += 1_u8;
-            }
+    // Drop the guard column by right-shifting 1, then round.
+    let mut mantissa_result = mantissa_result.shift_fixed(1).truncate(mant_len);
+
+    // The guard bit was already consumed above; the remaining round/sticky bits
+    // from the alignment shift become the new guard/round inputs.
+    let post_sub_info = ShiftRoundingInfo {
+        guard: sub_align_info.round,
+        round: sub_align_info.sticky,
+        sticky: false,
+    };
+    let result_lsb = mantissa_result.get(0).unwrap_or(false);
+    if post_sub_info.should_round_up(result_lsb) {
+        mantissa_result.add_one_in_place();
+        if mantissa_result.len() > mant_len {
+            mantissa_result = mantissa_result.shift_fixed(1).truncate(mant_len);
+            exp_lhs += 1_u8;
         }
     }
 
-    // 7. Grow exponent if necessary. (no limit on size)
     *lhs = build_finite_result(
         lhs.sign,
         exp_lhs - 1_u8,
@@ -333,12 +307,30 @@ mod tests {
         let c = FlexFloat::from(a) + FlexFloat::from(b);
         assert_eq!(c.to_f64(), Some(a + b));
 
-        // Test overflow case
+        // Test overflow case: exponent AND fraction must grow together.
         let a = f64::MAX;
         let b = f64::MAX / 2.0;
         let c = FlexFloat::from(a) + FlexFloat::from(b);
         assert!(!c.is_infinite(), "Result should not overflow");
-        assert!(c.exponent.len() > 11, "Exponent should have grown");
+        assert_eq!(
+            c.exponent.len(),
+            12,
+            "Exponent should have grown to 12 bits"
+        );
+        assert_eq!(
+            c.fraction.len(),
+            115,
+            "Fraction should have grown to 115 bits"
+        );
+
+        // grown + normal: fraction must remain grown.
+        let grown = FlexFloat::from(f64::MAX) + FlexFloat::from(f64::MAX / 2.0);
+        let sum = grown + FlexFloat::from(1.0_f64);
+        assert_eq!(
+            sum.fraction.len(),
+            115,
+            "grown + normal fraction should stay 115 bits"
+        );
 
         // Test wierd edge case
         let a = f64::MAX;
@@ -395,12 +387,21 @@ mod tests {
         let c = FlexFloat::from(a) - FlexFloat::from(b);
         assert_eq!(c.to_f64(), Some(a - b));
 
-        // Test overflow case
+        // Test overflow case: exponent AND fraction must grow together.
         let a = FlexFloat::from(-f64::MAX);
         let b = FlexFloat::from(f64::MAX / 2.0);
         let c = a - b;
         assert!(!c.is_infinite(), "Result should not overflow");
-        assert!(c.exponent.len() > 11, "Exponent should have grown");
+        assert_eq!(
+            c.exponent.len(),
+            12,
+            "Sub exponent should have grown to 12 bits"
+        );
+        assert_eq!(
+            c.fraction.len(),
+            115,
+            "Sub fraction should have grown to 115 bits"
+        );
 
         // Test wierd edge case
         let a = f64::MAX;

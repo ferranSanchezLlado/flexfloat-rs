@@ -10,6 +10,38 @@ use crate::bitarray::BitArray;
 use crate::bitarray::traits::BitArrayRounding;
 use crate::prelude::BitArrayConstruction;
 
+/// The offset constant `k` in the exponent-width formula `e = round(log₂(n) * 1.5 + k)`.
+///
+/// Chosen so that at `n = 64` (IEEE 754 f64) the formula yields `e = 11`:
+///   `round(log₂(64) * 1.5 + 2) = round(6 * 1.5 + 2) = round(11) = 11`.
+const EXP_FORMULA_K: f64 = 2.0;
+
+/// Compute the number of exponent bits for a FlexFloat of total bit-width `n`.
+///
+/// Formula: `e = round(log₂(n) * 1.5 + k)`
+///
+/// At the IEEE 754 baseline (`n = 64`): `e = 11`.
+/// As `n` grows the exponent field grows sub-linearly, leaving more room for the mantissa.
+///
+/// # Panics
+/// Panics if `n < 3` (need at least sign + 1 exp + 1 frac bit).
+pub(crate) fn exponent_bits_for_total(n: usize) -> usize {
+    assert!(n >= 3, "FlexFloat needs at least 3 bits total");
+    let e = (n as f64).log2() * 1.5 + EXP_FORMULA_K;
+    // Round-half-to-even (banker's rounding) to match IEEE rounding semantics.
+    let floor = e.floor() as usize;
+    let frac = e - e.floor();
+    let e_rounded = if (frac - 0.5).abs() < f64::EPSILON {
+        // Exactly 0.5: round to even
+        if floor % 2 == 0 { floor } else { floor + 1 }
+    } else {
+        e.round() as usize
+    };
+    // Clamp so that there's always at least 1 fraction bit and at least 2 exponent bits
+    // (need 2+ bits to distinguish subnormal/normal/infinity sentinels).
+    e_rounded.max(2).min(n - 2)
+}
+
 /// Grow a `BigInt` exponent into a `BitArray` of sufficient width.
 pub(crate) fn grow_exponent<B: BitArrayConstruction>(exponent: BigInt, min_bits: usize) -> B {
     let n_bits = exponent.bits();

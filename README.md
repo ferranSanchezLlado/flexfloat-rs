@@ -1,6 +1,6 @@
 # FlexFloat
 
-A high-precision Rust library for arbitrary-precision floating-point arithmetic with growable exponents and fixed-size fractions. FlexFloat extends IEEE 754 double-precision format to handle numbers far beyond the standard range while maintaining computational efficiency and precision consistency.
+A high-precision Rust library for arbitrary-precision floating-point arithmetic with growable exponents and fractions. FlexFloat extends IEEE 754 double-precision format to handle numbers far beyond the standard range while maintaining computational efficiency and precision consistency.
 
 [![Crates.io](https://img.shields.io/crates/v/flexfloat.svg)](https://crates.io/crates/flexfloat)
 [![Documentation](https://docs.rs/flexfloat/badge.svg)](https://docs.rs/flexfloat)
@@ -10,8 +10,8 @@ A high-precision Rust library for arbitrary-precision floating-point arithmetic 
 
 FlexFloat automatically adapts to the scale of your computations:
 
-- **Growable exponents** — exponent bit width expands automatically when values exceed the current range
-- **Fixed 52-bit mantissa** — IEEE 754-compatible precision
+- **Growable exponents and fractions** — both fields expand together automatically when values exceed the current range
+- **52-bit mantissa by default** — IEEE 754-compatible precision; grows alongside the exponent on overflow
 - **Full IEEE 754 special values** — ±0, ±∞, NaN
 - **Backend-generic** — the `FlexFloat<Exp, Frac>` struct is generic over `BitArray` implementations; `FlexFloat` (no params) is a type alias for `FlexFloat<BoolBitArray>`
 
@@ -79,15 +79,15 @@ assert_eq!(f, 1.5);
 
 ## Math functions
 
-| Category | Functions |
-|---|---|
-| Rounding | `round`, `floor`, `ceil`, `trunc`, `fract`, `round_ties_even` |
-| Exponential | `exp`, `exp2`, `exp_m1`, `ln`, `ln_1p`, `log`, `log2`, `log10` |
-| Power/root | `pow`, `sqrt`, `cbrt`, `hypot`, `powi`, `powf` |
-| Trigonometry | `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sin_cos` |
-| Hyperbolic | `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` |
-| Utility | `signum`, `copysign`, `recip`, `abs`, `mul_add`, `to_degrees`, `to_radians` |
-| Comparison | `min`, `max`, `clamp`, `total_cmp`, `next_up`, `next_down` |
+| Category      | Functions                                                          |
+|---------------|--------------------------------------------------------------------|
+| Rounding      | `round`, `floor`, `ceil`, `trunc`, `fract`, `round_ties_even`      |
+| Exponential   | `exp`, `exp2`, `exp_m1`, `ln`, `ln_1p`, `log`, `log2`, `log10`    |
+| Power/root    | `pow`, `sqrt`, `cbrt`, `hypot`, `powi`, `powf`                     |
+| Trigonometry  | `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sin_cos`    |
+| Hyperbolic    | `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`                  |
+| Utility       | `signum`, `copysign`, `recip`, `abs`, `mul_add`, `to_degrees`, `to_radians` |
+| Comparison    | `min`, `max`, `clamp`, `total_cmp`, `next_up`, `next_down`         |
 
 All functions are available as free functions in `flexfloat::math` and as methods on `FlexFloat`.
 
@@ -122,8 +122,8 @@ println!("max_exp = {}", huge.max_exp());
 use flexfloat::FlexFloat;
 
 let x = FlexFloat::from(3.14_f64);
-let (le_bytes, exp_bits) = x.to_le_bytes();
-let restored = FlexFloat::from_le_bytes(&le_bytes, exp_bits);
+let (le_bytes, exp_bits, frac_bits) = x.to_le_bytes();
+let restored = FlexFloat::from_le_bytes(&le_bytes, exp_bits, frac_bits);
 assert_eq!(x, restored);
 ```
 
@@ -165,13 +165,13 @@ src/
 
 ## Comparison
 
-| Feature     | `f64`   | `BigDecimal` | `FlexFloat`     |
-|-------------|---------|--------------|-----------------|
-| Range       | Limited | Unlimited    | Unlimited       |
-| Precision   | 52 bits | Arbitrary    | 52 bits (fixed) |
-| Performance | Fastest | Slower       | Balanced        |
-| Memory      | 8 bytes | Variable     | Variable        |
-| IEEE 754    | Full    | Partial      | Full            |
+| Feature     | `f64`   | `BigDecimal` | `FlexFloat`                   |
+|-------------|---------|--------------|-------------------------------|
+| Range       | Limited | Unlimited    | Unlimited                     |
+| Precision   | 52 bits | Arbitrary    | 52 bits (grows with exponent) |
+| Performance | Fastest | Slower       | Balanced                      |
+| Memory      | 8 bytes | Variable     | Variable                      |
+| IEEE 754    | Full    | Partial      | Full                          |
 
 ## Contributing
 

@@ -43,7 +43,7 @@ jobs:
 
       - name: Convert results to bencher format
         shell: bash
-        run: bash scripts/criterion-to-bencher.sh target/criterion | tee bench_output.txt
+        run: bash scripts/criterion-to-bencher.sh target/criterion | tr -d '\r' | tee bench_output.txt
 
       - name: Ensure gh-pages branch exists
         shell: bash
